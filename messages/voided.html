@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice Voided</title>
+    <!-- Poppins Font from Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS CDN for utility classes -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom font family for Poppins */
+        body {
+            font-family: 'Poppins', sans-serif;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
+
+    <!-- Voided invoice card container -->
+    <div class="w-full max-w-lg bg-white rounded-2xl shadow-xl p-8 text-center">
+
+        <!-- Logo section -->
+        <div class="mb-6">
+            <!-- Placeholder logo. Replace with your company logo URL. -->
+            <img src="https://s3-eu-west-1.amazonaws.com/tpd/logos/64efbadcd8bcf37595780295/0x0.png" alt="Company Logo"
+                class="block mx-auto h-12 rounded-lg max-w-[250px]" draggable="false">
+        </div>
+
+        <!-- Voided icon -->
+        <div class="mb-3 pt-3">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none"
+                stroke="#6b7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="block mx-auto">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="15" y1="9" x2="9" y2="15"></line>
+                <line x1="9" y1="9" x2="15" y2="15"></line>
+            </svg>
+        </div>
+
+        <!-- Voided message section -->
+        <h1 class="text-3xl font-bold text-gray-800 mb-2">Invoice Voided</h1>
+        <p class="text-base text-gray-600 mb-8">This invoice has been voided. No payment is required.</p>
+
+        <!-- Transaction details -->
+        <div class="bg-gray-50 rounded-xl p-6 mb-8 text-left">
+            <div class="flex justify-between items-center mb-4 pb-2 border-b border-gray-200">
+                <span class="text-gray-500 font-medium">Invoice ID:</span>
+                <span class="text-gray-800 font-semibold">#{{invoiceID}}</span>
+            </div>
+            <div class="flex justify-between items-center mb-4 pb-2 border-b border-gray-200">
+                <span class="text-gray-500 font-medium">Date:</span>
+                <span class="text-gray-800 font-semibold">{{dated}}</span>
+            </div>
+            <div class="flex justify-between items-center">
+                <span class="text-gray-500 font-medium">Amount Due:</span>
+                <span class="text-gray-800 font-bold line-through">${{amountDue}}</span>
+            </div>
+        </div>
+
+        <!-- Call to action button (grayed out) -->
+        <button class="w-full bg-gray-400 text-white font-bold py-3 px-6 rounded-lg shadow-md cursor-not-allowed"
+            disabled>
+            Invoice no longer active
+        </button>
+    </div>
+
+    <!-- Footer section -->
+    <div class="fixed inset-x-0 bottom-0 text-center p-4 text-gray-500 text-sm">
+        <p class="m-0">&copy; 2025 Expert Code Craft. All rights reserved.</p>
+        <div class="mt-2 flex justify-center space-x-4 text-gray-500">
+            <a href="#" class="hover:text-gray-700 transition-colors duration-200">Privacy Policy</a>
+            <span class="text-gray-300">|</span>
+            <a href="#" class="hover:text-gray-700 transition-colors duration-200">Terms of Service</a>
+        </div>
+    </div>
+</body>
+
+</html>

@@ -7,6 +7,18 @@ var express = require('express'),
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
+router.get('/get-files', async (req, res) => {
+    try {
+        const query = "SELECT * FROM `Files` ORDER BY ID DESC";
+        const [result] = await con.execute(query);
+        res.json(result);
+
+    } catch (error) {
+        console.error("An error occured: ", error);
+        res.status(500).json("Internal server error.");
+    }
+});
+
 router.post("/upload-lead-file", upload.array("files"), async (req, res) => {
     try {
         const userId = req.user?.ID;
@@ -47,7 +59,6 @@ router.delete("/delete-lead-file", async (req, res) => {
     const fileId = req.query.fileID;
     const userId = req.user?.ID;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-
     try {
         // 1. Get file record from DB
         const [rows] = await con.query("SELECT * FROM Files WHERE ID = ?", [fileId]);

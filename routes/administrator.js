@@ -12,7 +12,6 @@ router.get('/get-files', async (req, res) => {
         const query = "SELECT * FROM `Files` ORDER BY ID DESC";
         const [result] = await con.execute(query);
         res.json(result);
-
     } catch (error) {
         console.error("An error occured: ", error);
         res.status(500).json("Internal server error.");
@@ -52,6 +51,18 @@ router.post("/upload-lead-file", upload.array("files"), async (req, res) => {
     } catch (error) {
         console.error("Upload error: ", error);
         res.status(500).json({ error: "Upload failed" });
+    }
+});
+
+router.post('/update-file-details', async (req, res) => {
+    try {
+        const { fileName, fileID, access } = req.body;
+        const query = "UPDATE `Files` SET FileName = ?, Access = ? WHERE ID = ?";
+        const [result] = await con.execute(query, [fileName, access, fileID]);
+        res.json('Success');
+    } catch (error) {
+        console.error("An error occured: ", error);
+        res.status(500).json("Internal server error.");
     }
 });
 

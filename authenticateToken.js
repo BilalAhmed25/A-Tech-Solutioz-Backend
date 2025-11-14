@@ -12,10 +12,9 @@ const authenticateToken = (req, res, next) => {
     if (!token) {
         return res.status(403).json({ message: "Token missing from Authorization header" });
     }
-
+    
     jwt.verify(token, process.env.SECRET_KEY, (err, user) => {
         if (err) {
-            console.log(err)
             return res.status(401).json({ message: "Invalid or expired token" });
         }
 

@@ -283,6 +283,7 @@ router.get('/get-active-shifts', async function (req, res) {
 
 router.put('/update-profile', async function (req, res) {
     const {
+        empID,
         name,
         email,
         phone,
@@ -299,14 +300,15 @@ router.put('/update-profile', async function (req, res) {
         status
     } = req.body;
 
-    if (!email) {
-        return res.status(400).json({ error: "Email is required to update profile." });
+    if (!empID) {
+        return res.status(400).json({ error: "Employee ID is required to update profile." });
     }
 
     const query = `
         UPDATE UserDetails SET 
             Name = ?, 
             Phone = ?, 
+            Email = ?,
             Password = ?,
             DOB = ?,
             DepartmentID = ?, 
@@ -318,13 +320,14 @@ router.put('/update-profile', async function (req, res) {
             City = ?,
             AccountType = ?, 
             Status = ?
-        WHERE Email = ?;
+        WHERE ID = ?;
     `;
 
     try {
         const [result] = await con.execute(query, [
             name,
             phone,
+            email,
             password,
             dateOfBirth,
             departmentId,
@@ -336,7 +339,7 @@ router.put('/update-profile', async function (req, res) {
             city,
             accountType || null,
             status,
-            email
+            empID
         ]);
 
         if (result.affectedRows === 0) {

@@ -250,6 +250,7 @@ router.get('/get-all-employee', async function (req, res) {
         query += " AND `UserDetails`.Status = ?";
         params.push(status);
     }
+    query += " ORDER BY UserDetails.ID DESC;";
     try {
         const [result] = await con.execute(query, params);
         res.status(200).json(result);

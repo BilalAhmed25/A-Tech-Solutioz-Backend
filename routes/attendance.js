@@ -106,13 +106,6 @@ router.get('/all-staff-attendance', async (req, res) => {
     `;
     const params = [];
 
-    /*if (dated) {
-        // baseQuery += ` AND DATE(iclock_transaction.punch_time) = ?`;
-        baseQuery += ` AND DATE(iclock_transaction.punch_time) BETWEEN ? AND ?`;
-        const nextDay = new Date(new Date(dated).getTime() + 24 * 60 * 60 * 1000);
-        params.push(dated, nextDay);
-    } */
-
     if (dated) {
         baseQuery += ` AND DATE(iclock_transaction.punch_time) = ?`;
         params.push(dated);
@@ -132,10 +125,7 @@ router.get('/all-staff-attendance', async (req, res) => {
 
     try {
         const [attendanceLogs] = await attendanceDB.execute(baseQuery, params);
-
         const empCodes = [...new Set(attendanceLogs.map(log => log.emp_code))];
-        // const placeholders = empCodes.map(() => '?').join(',');
-        // const [userDetails] = await con.execute(`SELECT ID, Name, Email, Designation, ProfilePicture FROM UserDetails WHERE ID IN (${placeholders})`, empCodes);
         let userDetails = [];
         if (empCodes.length > 0) {
             const placeholders = empCodes.map(() => '?').join(',');
@@ -176,7 +166,6 @@ router.get('/all-staff-attendance', async (req, res) => {
             const sortedLogs = logsByUser[userId].sort((a, b) =>
                 new Date(a.punch_time) - new Date(b.punch_time)
             );
-            // const sessions = groupSessions(sortedLogs);
             const sessionDate = moment(sortedLogs[0].punch_time).format('YYYY-MM-DD');
             const shift = await getShiftForUserOnDate(userId, sessionDate);
             if (!shift) continue;
@@ -210,19 +199,12 @@ router.get('/all-staff-attendance', async (req, res) => {
                 const checkInLocal = DateTime.fromJSDate(session.checkIn).setZone('Asia/Karachi', { keepLocalTime: true });
                 const checkOutLocal = session.checkOut ? DateTime.fromJSDate(session.checkOut).setZone('Asia/Karachi', { keepLocalTime: true }) : null;
 
-                // const checkInLocal = DateTime.fromJSDate(new Date(session.checkIn), { zone: 'utc' }).setZone(PAKISTAN_TIMEZONE);
-                // const checkOutLocal = session.checkOut
-                //     ? DateTime.fromJSDate(new Date(session.checkOut), { zone: 'utc' }).setZone(PAKISTAN_TIMEZONE)
-                //     : null;
-
                 finalResults.push({
                     UserID: parseInt(userId),
                     Name: logs[0].Name,
                     Email: logs[0].Email,
                     Designation: logs[0].Designation,
                     ProfilePicture: logs[0].ProfilePicture,
-                    // CheckIn: session.checkIn,
-                    // CheckOut: session.checkOut,
                     CheckIn: checkInLocal,
                     CheckOut: checkOutLocal ? checkOutLocal : null,
                     ShiftName: shift.name,
@@ -232,24 +214,8 @@ router.get('/all-staff-attendance', async (req, res) => {
                     workingMinutes,
                     Status: status
                 });
-
-                // finalResults.push({
-                //     UserID: parseInt(userId),
-                //     Name: logs[0].Name,
-                //     Email: logs[0].Email,
-                //     Designation: logs[0].Designation,
-                //     ProfilePicture: logs[0].ProfilePicture,
-                //     CheckIn: session.checkIn,
-                //     CheckOut: session.checkOut,
-                //     ShiftName: shift.name,
-                //     ShiftStartTime: shiftDuration.startTime,
-                //     ShiftEndTime: shiftDuration.endTime,
-                //     lateMinutes,
-                //     workingMinutes
-                // });
             }
         }
-        // console.log(logs[0])
         res.json(finalResults);
     } catch (error) {
         console.error(error);
@@ -258,99 +224,65 @@ router.get('/all-staff-attendance', async (req, res) => {
 });
 
 
-router.get('/staff-attendance', async function (req, res) {
-    const { userID, startDate, endDate, dated } = req.query;
-
-    // let baseQuery = `
-    //     SELECT 
-    //         iclock_transaction.emp_code, 
-    //         iclock_transaction.punch_time, 
-    //         personnel_employee.first_name, 
-    //         personnel_employee.last_name, 
-    //         personnel_employee.department_id, 
-    //         personnel_position.position_name 
-    //     FROM iclock_transaction
-    //     JOIN personnel_employee 
-    //         ON iclock_transaction.emp_code = personnel_employee.emp_code
-    //     LEFT JOIN personnel_position 
-    //         ON personnel_employee.position_id = personnel_position.position_code
-    //     WHERE iclock_transaction.punch_state = '0'
-    // `;
+router.get('/my-attendance', async function (req, res) {
+    const { startDate, endDate, dated } = req.query;
+    const userID = req.user?.ID;
     let baseQuery = `
         SELECT 
             iclock_transaction.emp_code AS EmpID,
-            iclock_transaction.punch_time, 
+            iclock_transaction.punch_time
         FROM iclock_transaction
         JOIN personnel_employee 
             ON iclock_transaction.emp_code = personnel_employee.emp_code
         LEFT JOIN personnel_position 
             ON personnel_employee.position_id = personnel_position.position_code
-        LEFT JOIN UserDetails ud
-            ON iclock_transaction.emp_code = ud.EmpID
         WHERE iclock_transaction.punch_state = '0'
     `;
 
     const params = [];
 
-    // Date filter (either single date or date range)
-    if (dated) {
-        baseQuery += ` AND DATE(iclock_transaction.punch_time) = ?`;
-        params.push(dated);
-    } else if (startDate && endDate) {
+    if (startDate && endDate) {
         baseQuery += ` AND DATE(iclock_transaction.punch_time) BETWEEN ? AND ?`;
         params.push(startDate, endDate);
     } else {
         return res.status(400).json({ error: "Provide either 'dated' or both 'startDate' and 'endDate'." });
     }
 
-    // User filter
     if (userID) {
-        baseQuery += ` AND iclock_transaction.emp_code = ?`;
-        params.push(userID);
+        baseQuery += ` AND iclock_transaction.emp_code = 91`;
+        // params.push(userID);
     }
 
     baseQuery += ` ORDER BY iclock_transaction.punch_time DESC`;
 
     try {
-        const [result] = await attendanceDB.execute(baseQuery, params);
-        res.json(result);
+        // 1️⃣ Query attendance DB
+        const [attendanceRows] = await attendanceDB.execute(baseQuery, params);
+
+        // 2️⃣ Fetch UserDetails from the other DB
+        const empIDs = [...new Set(attendanceRows.map(r => r.EmpID))];
+
+        let userDetails = [];
+        if (empIDs.length > 0) {
+            const placeholders = empIDs.map(() => '?').join(',');
+            const userQuery = `SELECT ID AS 'EmpID', Name, Email, Phone FROM UserDetails WHERE ID IN (${placeholders})`;
+            const [userRows] = await con.execute(userQuery, empIDs);
+            userDetails = userRows;
+        }
+
+        // 3️⃣ Merge the results
+        const final = attendanceRows.map(row => ({
+            ...row,
+            UserDetails: userDetails.find(u => u.EmpID === row.EmpID) || null
+        }));
+
+        res.json(final);
+
     } catch (error) {
         console.error(error);
         res.status(500).json("Internal server error. Please try again later.");
     }
 });
 
-
-router.get('/staffs-attendance', function (req, res) {
-    res.sendFile(path.join(__dirname, '../views/administrator/staffAttendance.html'))
-})
-
-router.post('/getStudentAttendanceReport', function (req, res) {
-    if (req.body.generateFor == 'students' && req.body.students != '') {
-        var query = "SELECT * FROM `ExpenseRecord` JOIN `UserBioData` ON `UserBioData`.`StaffID` = `ExpenseRecord`.`UploadedBy` WHERE `Date` >= '" + req.body.dateFrom + "' AND `DATE` <= '" + req.body.dateTill + "' AND `ExpenseRecord`.`InstituteCode` = '" + req.user.InstituteCode + "'";
-        con.query(query, function (err, result) {
-            if (err) {
-                res.json(err.sqlMessage);
-            }
-            else {
-                res.json(result)
-            }
-        });
-    }
-    else if (req.body.generateFor == 'classes' && req.body.classes != '') {
-        var query = "SELECT * FROM `ExpenseRecord` JOIN `UserBioData` ON `UserBioData`.`StaffID` = `ExpenseRecord`.`UploadedBy` WHERE `Date` >= '" + req.body.dateFrom + "' AND `DATE` <= '" + req.body.dateTill + "' AND `ExpenseRecord`.`InstituteCode` = '" + req.user.InstituteCode + "'";
-        con.query(query, function (err, result) {
-            if (err) {
-                res.json(err.sqlMessage);
-            }
-            else {
-                res.json(result)
-            }
-        });
-    }
-    else {
-        res.json('Please select all parameters to generate report.')
-    }
-})
 
 module.exports = router;

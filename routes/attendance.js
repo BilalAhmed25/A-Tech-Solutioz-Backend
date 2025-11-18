@@ -80,6 +80,39 @@ function smartSessions(logs, shiftStartTime, shiftDate, maxHoursGap = 18) {
     return sessions;
 }
 
+async function smartSessionsForSingleID(logs, userId) {
+    if (!logs || logs.length === 0) return [];
+
+    // Group logs by date
+    const logsByDate = {};
+    logs.forEach(log => {
+        const logDate = moment(log.punch_time).format('YYYY-MM-DD');
+        if (!logsByDate[logDate]) logsByDate[logDate] = [];
+        logsByDate[logDate].push(log);
+    });
+
+    const allSessions = [];
+
+    for (const date in logsByDate) {
+        const dayLogs = logsByDate[date].sort((a, b) =>
+            new Date(a.punch_time) - new Date(b.punch_time)
+        );
+
+        // Get shift & duration for this date
+        const shift = await getShiftForUserOnDate(userId, date);
+        if (!shift) continue;
+
+        const shiftDuration = await getShiftDurationOnDate(shift.ID, date);
+        if (!shiftDuration) continue;
+
+        // Call your existing smartSessions
+        const sessions = smartSessions(dayLogs, shiftDuration.StartTime, date);
+        allSessions.push(...sessions.map(s => ({ ...s, date })));
+    }
+
+    return allSessions;
+}
+
 // Get assigned shift for user on a specific date
 async function getShiftForUserOnDate(userId, date) {
     const query = `SELECT s.* FROM UserShiftAssignments usa JOIN Shifts s ON usa.ShiftID = s.ID WHERE usa.UserID = ? AND usa.StartDate <= ? AND (usa.EndDate IS NULL OR usa.EndDate >= ?) LIMIT 1`;
@@ -171,7 +204,15 @@ router.get('/all-staff-attendance', async (req, res) => {
             if (!shift) continue;
             const shiftDuration = await getShiftDurationOnDate(shift.ID, sessionDate);
             if (!shiftDuration) continue;
-            const sessions = smartSessions(sortedLogs, shiftDuration.StartTime, sessionDate);
+            // const sessions = smartSessions(sortedLogs, shiftDuration.StartTime, sessionDate);
+            let sessions = [];
+            if (userID && startDate && endDate) {
+                // Single employee with date range
+                sessions = await smartSessionsForSingleID(attendanceLogs, userID);
+            } else {
+                // Existing logic for all employees or single date
+                sessions = smartSessions(logsForDay, shiftStartTime, shiftDate);
+            }
 
             for (const session of sessions) {
                 const sessionDate = moment(session.checkIn).format('YYYY-MM-DD');
@@ -198,7 +239,6 @@ router.get('/all-staff-attendance', async (req, res) => {
 
                 const checkInLocal = DateTime.fromJSDate(session.checkIn).setZone('Asia/Karachi', { keepLocalTime: true });
                 const checkOutLocal = session.checkOut ? DateTime.fromJSDate(session.checkOut).setZone('Asia/Karachi', { keepLocalTime: true }) : null;
-
                 finalResults.push({
                     UserID: parseInt(userId),
                     Name: logs[0].Name,

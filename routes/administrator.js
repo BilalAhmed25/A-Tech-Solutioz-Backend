@@ -9,7 +9,12 @@ const upload = multer({ storage });
 
 router.get('/get-files', async (req, res) => {
     try {
-        const query = "SELECT * FROM `Files` ORDER BY ID DESC";
+        const { ID, DepartmentID } = req.user;
+        let query = "SELECT * FROM `Files`";
+        if (DepartmentID !== 5) {
+            query += ` WHERE FIND_IN_SET(${ID}, Access)`;
+        }
+        query += " ORDER BY ID DESC;";
         const [result] = await con.execute(query);
         res.json(result);
     } catch (error) {

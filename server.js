@@ -20,10 +20,7 @@ const express = require('express'),
 const allowedOrigins = [
     'http://localhost:5173',
     'http://127.0.0.1:5500/',
-    'https://expertscommunication.net',
-    'https://crm.expertscommunication.net',
-    'https://expertsfundinggroup.com',
-    'https://expertcodecraft.com',
+    'https://crm.a-techsolutionz.com',
 ];
 
 // app.use(cors());

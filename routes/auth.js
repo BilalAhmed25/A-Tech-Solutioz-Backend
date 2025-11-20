@@ -1,7 +1,11 @@
 var express = require('express'),
     router = express.Router(),
     jwt = require('jsonwebtoken'),
-    { con } = require('../database');
+    { con } = require('../database'),
+    sendEmail = require('../sendEmail'),
+    fs = require('fs'),
+    path = require('path')
+    ;
 
 router.post('/login', async function (req, res) {
     const { email, password } = req.body;
@@ -38,8 +42,35 @@ router.post('/sign-up', async function (req, res) {
 
         const insertUserQuery = `INSERT INTO UserDetails (Name, Email, Phone, Password, DepartmentID, DesignationID, ResidentialAddress, Languages, AccountType, Status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
         await con.execute(insertUserQuery, [name, email, phone, password, departmentId, designationId, residentialAddress, languages, accountType, status]);
-        res.status(201).json("User registered successfully.");
 
+        const templatePath = path.join(__dirname, '../email-templates/welcome-onboard.html');
+        let htmlTemplate = fs.readFileSync(templatePath, 'utf-8');
+        htmlTemplate = htmlTemplate.replace('{{fullName}}', name);
+        htmlTemplate = htmlTemplate.replace('{{email}}', email);
+        htmlTemplate = htmlTemplate.replace('{{password}}', password);
+        await sendEmail(
+            `"Human Resource Department" <${process.env.SMTP_USER}>`,
+            email,
+            'Thank you for being a part of A Tech Solutionz',
+            htmlTemplate,
+            [
+                {
+                    filename: 'logo-white.png',
+                    path: path.join(__dirname, '../email-templates/images/logo-white.png'),
+                    cid: 'logo'
+                }
+            ],
+            {
+                host: process.env.SMTP_HOST,
+                port: parseInt(process.env.SMTP_PORT),
+                secure: true,
+                auth: {
+                    user: process.env.SMTP_USER,
+                    pass: process.env.SMTP_PASS,
+                },
+            }
+        );
+        res.status(201).json("User registered successfully.");
     } catch (error) {
         console.error("Signup error:", error);
         res.status(500).json("Internal server error. Please try again later.");

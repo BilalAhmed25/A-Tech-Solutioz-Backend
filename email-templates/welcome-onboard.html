@@ -21,10 +21,10 @@
         }
 
         table,
-        td {
+        /* td {
             mso-table-lspace: 0pt;
             mso-table-rspace: 0pt;
-        }
+        } */
 
         img {
             -ms-interpolation-mode: bicubic;
@@ -52,7 +52,7 @@
                             <table border="0" cellpadding="0" cellspacing="0">
                                 <tr>
                                     <td align="center">
-                                        <img src="./images/logo-white.png" alt="[Company Name] Logo" width="200"
+                                        <img src="cid:logo-white" alt="A Tech Solutionz" width="200"
                                             style="display: block; border: 0;">
                                     </td>
                                 </tr>
@@ -68,8 +68,8 @@
                             </h2>
 
                             <p class="poppins"
-                                style="font-size: 14px; color: #333333; line-height: 1.6; margin-bottom: 20px;">
-                                Dear **[User Name]**,
+                                style="font-size: 14px; color: #333333; line-height: 1.6; margin-bottom: 8px;">
+                                Dear <b>{{fullName}}</b>,
                             </p>
 
                             <p class="poppins"
@@ -78,7 +78,7 @@
                                 the team!
                             </p>
 
-                            <table border="0" cellpadding="12" cellspacing="0" width="100%"
+                            <table border="0" cellpadding="5" cellspacing="0" width="100%"
                                 style="background-color: #f9f9f9; border: 1px solid #eeeeee; border-radius: 6px; margin: 20px 0;">
                                 <tr>
                                     <td width="20%" class="poppins"
@@ -87,7 +87,7 @@
                                     </td>
                                     <td width="80%" class="poppins"
                                         style="font-size: 14px; color: #555555; font-weight: 700;">
-                                        [User Email Address]
+                                        {{email}}
                                     </td>
                                 </tr>
                                 <tr>
@@ -97,7 +97,7 @@
                                     </td>
                                     <td width="80%" class="poppins"
                                         style="font-size: 14px; color: #dc3545; font-weight: 700;">
-                                        [Temporary Password]
+                                        {{password}}
                                     </td>
                                 </tr>
                             </table>

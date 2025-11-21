@@ -1,264 +1,312 @@
-const express = require('express'),
-    path = require('path'),
-    bodyParser = require('body-parser'),
-    multer = require('multer'),
-    moment = require('moment'),
-    router = express.Router(),
-    checkAccess = require('../accessControl'),
-    { con, attendanceDB } = require('../database'),
-    { DateTime } = require('luxon'),
-    PAKISTAN_TIMEZONE = 'Asia/Karachi';
-;
+const express = require('express');
+const router = express.Router();
+const { con, attendanceDB } = require('../database');
+const moment = require('moment');
 
-// Calculate late minutes
-function calculateLate(checkIn, shiftStartTime) {
-    if (!shiftStartTime) {
-        console.warn('Missing shiftStartTime for check-in:', checkIn);
-        return 0; // or -1 if you want to flag it
+// -------------------- Helper Functions --------------------
+
+// Centralized logic to calculate all metrics for a specific day
+function calculateDailyMetrics(checkIn, checkOut, shiftStartStr, shiftEndStr, requiredHours, dayDate) {
+    // Defaults
+    let lateMinutes = 0;
+    let leftEarlyMinutes = 0;
+    let extraMinutes = 0;
+    let workingMinutes = 0;
+    let status = 'Absent';
+
+    // 1. Status Determination
+    if (checkIn) {
+        status = 'Present';
+        if (!checkOut) status = 'Left without checkout';
     }
 
-    const date = moment(checkIn).format('YYYY-MM-DD');
-    const shiftStartStr = `${date}T${shiftStartTime}`;
-    const shiftStart = moment(shiftStartStr); // now in ISO 8601 format
-
-    if (!shiftStart.isValid()) {
-        console.warn('Invalid shiftStart:', shiftStartStr);
-        return 0;
-    }
-
-    const diff = moment(checkIn).diff(shiftStart, 'minutes');
-    return diff > 0 ? diff : 0;
-}
-
-// Calculate working duration
-function calculateWorkMinutes(checkIn, checkOut) {
-    let inTime = moment(checkIn);
-    let outTime = moment(checkOut);
-    if (outTime.isBefore(inTime)) outTime.add(1, 'day');
-    return outTime.diff(inTime, 'minutes');
-}
-
-function smartSessions(logs, shiftStartTime, shiftDate, maxHoursGap = 18) {
-    const sessions = [];
-    const usedIndexes = new Set();
-
-    const shiftStartMoment = moment(`${shiftDate}T${shiftStartTime}`);
-
-    let bestCheckInIndex = -1;
-    let minDiff = Infinity;
-
-    for (let i = 0; i < logs.length; i++) {
-        const logTime = moment(logs[i].punch_time);
-        const diff = Math.abs(logTime.diff(shiftStartMoment, 'minutes'));
-
-        if (diff < minDiff && diff <= 120) { // within 2 hours window
-            bestCheckInIndex = i;
-            minDiff = diff;
+    // If no shift is assigned, we can't calculate specific lateness/early leaving relative to shift
+    if (!shiftStartStr || !shiftEndStr) {
+        // Basic working minutes if no shift defined
+        if (checkIn && checkOut) {
+            workingMinutes = moment(checkOut).diff(moment(checkIn), 'minutes');
         }
+        return { lateMinutes, leftEarlyMinutes, extraMinutes, workingMinutes, status };
     }
 
-    if (bestCheckInIndex !== -1) {
-        const checkIn = logs[bestCheckInIndex].punch_time;
-        usedIndexes.add(bestCheckInIndex);
+    // 2. Parse Shift Timings
+    const shiftStartMoment = moment(`${dayDate}T${shiftStartStr}`);
+    let shiftEndMoment = moment(`${dayDate}T${shiftEndStr}`);
 
-        let checkOut = null;
-        for (let j = bestCheckInIndex + 1; j < logs.length; j++) {
-            const diffHours = moment(logs[j].punch_time).diff(moment(checkIn), 'hours', true);
-            if (diffHours > 0 && diffHours <= maxHoursGap) {
-                checkOut = logs[j].punch_time;
-                usedIndexes.add(j);
-                break;
-            }
-        }
-
-        sessions.push({
-            checkIn,
-            checkOut
-        });
+    // Handle overnight shifts (e.g., Start 22:00, End 06:00)
+    if (shiftEndMoment.isBefore(shiftStartMoment)) {
+        shiftEndMoment.add(1, 'day');
     }
 
-    return sessions;
-}
+    // 3. Parse Punch Timings
+    const inMoment = checkIn ? moment(checkIn) : null;
+    const outMoment = checkOut ? moment(checkOut) : null;
 
-async function smartSessionsForSingleID(logs, userId) {
-    if (!logs || logs.length === 0) return [];
-
-    // Group logs by date
-    const logsByDate = {};
-    logs.forEach(log => {
-        const logDate = moment(log.punch_time).format('YYYY-MM-DD');
-        if (!logsByDate[logDate]) logsByDate[logDate] = [];
-        logsByDate[logDate].push(log);
-    });
-
-    const allSessions = [];
-
-    for (const date in logsByDate) {
-        const dayLogs = logsByDate[date].sort((a, b) =>
-            new Date(a.punch_time) - new Date(b.punch_time)
-        );
-
-        // Get shift & duration for this date
-        const shift = await getShiftForUserOnDate(userId, date);
-        if (!shift) continue;
-
-        const shiftDuration = await getShiftDurationOnDate(shift.ID, date);
-        if (!shiftDuration) continue;
-
-        // Call your existing smartSessions
-        const sessions = smartSessions(dayLogs, shiftDuration.StartTime, date);
-        allSessions.push(...sessions.map(s => ({ ...s, date })));
+    // 4. Calculate Working Minutes
+    if (inMoment && outMoment) {
+        // Handle overnight work (if out is before in)
+        let calcOut = outMoment.clone();
+        if (calcOut.isBefore(inMoment)) calcOut.add(1, 'day');
+        workingMinutes = calcOut.diff(inMoment, 'minutes');
     }
 
-    return allSessions;
+    // 5. Calculate Late Minutes (CheckIn > ShiftStart)
+    if (inMoment && inMoment.isAfter(shiftStartMoment)) {
+        lateMinutes = inMoment.diff(shiftStartMoment, 'minutes');
+    }
+
+    // 6. Calculate Left Early Minutes (CheckOut < ShiftEnd)
+    // Only calculate if they actually checked out
+    if (outMoment && outMoment.isBefore(shiftEndMoment)) {
+        leftEarlyMinutes = shiftEndMoment.diff(outMoment, 'minutes');
+    }
+
+    // 7. Calculate Extra Hours (CheckOut > ShiftEnd)
+    // Requirement: Only calculate time AFTER shift end. Do not include early check-in.
+    if (outMoment && outMoment.isAfter(shiftEndMoment)) {
+        extraMinutes = outMoment.diff(shiftEndMoment, 'minutes');
+    }
+
+    return { lateMinutes, leftEarlyMinutes, extraMinutes, workingMinutes, status };
 }
 
-// Get assigned shift for user on a specific date
-async function getShiftForUserOnDate(userId, date) {
-    const query = `SELECT s.* FROM UserShiftAssignments usa JOIN Shifts s ON usa.ShiftID = s.ID WHERE usa.UserID = ? AND usa.StartDate <= ? AND (usa.EndDate IS NULL OR usa.EndDate >= ?) LIMIT 1`;
-    const [rows] = await con.execute(query, [userId, date, date]);
-    return rows[0];
+// Fetch shift info for a user
+async function getUserShift(userID, day) {
+    const [rows] = await con.execute(`
+        SELECT sd.StartTime, sd.EndTime
+        FROM UserShiftAssignments usa
+        JOIN ShiftDurations sd ON usa.ShiftID = sd.ShiftID
+        WHERE usa.UserID = ?
+          AND ? BETWEEN usa.StartDate AND IFNULL(usa.EndDate,'9999-12-31')
+          AND ? BETWEEN sd.StartDate AND IFNULL(sd.EndDate,'9999-12-31')
+        LIMIT 1
+    `, [userID, day, day]);
+    return rows[0] || null;
 }
 
-// Get shift duration valid for a date
-async function getShiftDurationOnDate(shiftId, date) {
-    const query = `SELECT * FROM ShiftDurations WHERE ShiftID = ? AND StartDate <= ? AND (EndDate IS NULL OR EndDate >= ?) LIMIT 1`;
-    const [rows] = await con.execute(query, [shiftId, date, date]);
-    return rows[0];
+// Fetch required hours for hourly employees
+async function getHourlyRequiredHours(userID) {
+    const [rows] = await con.execute(`SELECT RequiredHours FROM HourlyEmployees WHERE EmployeeID=?`, [userID]);
+    return rows[0]?.RequiredHours || null;
 }
 
-// Main route
-router.get('/all-staff-attendance', async (req, res) => {
-    const { userID, startDate, endDate, dated } = req.query;
-    let baseQuery = `
-        SELECT 
-            iclock_transaction.emp_code, 
-            iclock_transaction.punch_time
+// Fetch check-in and check-out within windows
+async function getCheckInOut(userID, shiftStart, day) {
+    const shiftStartMoment = moment(`${day}T${shiftStart}`);
+    const checkInStart = shiftStartMoment.clone().subtract(3, 'hours');
+    const checkInEnd = shiftStartMoment.clone().add(5, 'hours');
+    const checkOutEnd = shiftStartMoment.clone().add(15, 'hours');
+
+    const [logs] = await attendanceDB.execute(`
+        SELECT emp_code AS UserID, punch_time AS PunchTime
         FROM iclock_transaction
-        WHERE iclock_transaction.punch_state = '0'
-    `;
-    const params = [];
+        WHERE punch_state='0' AND emp_code=? 
+          AND punch_time BETWEEN ? AND ?
+        ORDER BY punch_time ASC
+    `, [userID, checkInStart.format('YYYY-MM-DD HH:mm:ss'), checkOutEnd.format('YYYY-MM-DD HH:mm:ss')]);
 
-    if (dated) {
-        baseQuery += ` AND DATE(iclock_transaction.punch_time) = ?`;
-        params.push(dated);
-    } else if (startDate && endDate) {
-        baseQuery += ` AND DATE(iclock_transaction.punch_time) BETWEEN ? AND ?`;
-        params.push(startDate, endDate);
-    } else {
-        return res.status(400).json({ error: "Provide either 'dated' or both 'startDate' and 'endDate'." });
-    }
+    // Determine check-in and check-out
+    const checkIn = logs.find(l => moment(l.PunchTime).isBetween(checkInStart, checkInEnd, null, '[]'))?.PunchTime || null;
+    const checkOut = logs.reverse().find(l => moment(l.PunchTime).isBetween(checkIn, checkOutEnd, null, '[]'))?.PunchTime || null;
 
-    if (userID) {
-        baseQuery += ` AND iclock_transaction.emp_code = ?`;
-        params.push(userID);
-    }
+    return { checkIn, checkOut };
+}
 
-    baseQuery += ` ORDER BY iclock_transaction.punch_time ASC`;
+// -------------------- API: /day --------------------
+router.get('/day', async (req, res) => {
+    const { day } = req.query;
+    if (!day) return res.status(400).json({ error: 'Please provide day parameter' });
 
     try {
-        const [attendanceLogs] = await attendanceDB.execute(baseQuery, params);
-        const empCodes = [...new Set(attendanceLogs.map(log => log.emp_code))];
-        let userDetails = [];
-        if (empCodes.length > 0) {
-            const placeholders = empCodes.map(() => '?').join(',');
-            const [rows] = await con.execute(
-                `SELECT UserDetails.ID, Name, Email, DesignationTitle, ProfilePicture FROM UserDetails LEFT JOIN Designations ON UserDetails.DesignationID = Designations.ID WHERE UserDetails.ID IN (${placeholders})`,
-                empCodes
-            );
-            userDetails = rows;
-        }
+        const [users] = await con.execute(`
+            SELECT u.ID AS UserID, u.Name, u.ProfilePicture,
+                   d.DepartmentName, des.DesignationTitle
+            FROM UserDetails u
+            LEFT JOIN Departments d ON u.DepartmentID = d.ID
+            LEFT JOIN Designations des ON u.DesignationID = des.ID
+            WHERE u.Status='Active'
+        `);
 
-        const userMap = {};
-        userDetails.forEach(user => {
-            userMap[user.ID] = user;
-        });
+        const results = [];
+        for (const user of users) {
+            const shift = await getUserShift(user.UserID, day);
+            const shiftStart = shift?.StartTime;
+            const shiftEnd = shift?.EndTime;
 
-        const enrichedLogs = attendanceLogs.map(log => {
-            const user = userMap[log.emp_code] || {};
-            return {
-                emp_code: log.emp_code,
-                punch_time: log.punch_time,
-                Name: user.Name || '',
-                Email: user.Email || '',
-                Designation: user.DesignationTitle || '',
-                ProfilePicture: user.ProfilePicture || ''
-            };
-        });
-
-        const logsByUser = {};
-        enrichedLogs.forEach(log => {
-            if (!logsByUser[log.emp_code]) logsByUser[log.emp_code] = [];
-            logsByUser[log.emp_code].push(log);
-        });
-
-        const finalResults = [];
-
-        for (const userId in logsByUser) {
-            const logs = logsByUser[userId];
-            const sortedLogs = logsByUser[userId].sort((a, b) =>
-                new Date(a.punch_time) - new Date(b.punch_time)
-            );
-            const sessionDate = moment(sortedLogs[0].punch_time).format('YYYY-MM-DD');
-            const shift = await getShiftForUserOnDate(userId, sessionDate);
-            if (!shift) continue;
-            const shiftDuration = await getShiftDurationOnDate(shift.ID, sessionDate);
-            if (!shiftDuration) continue;
-            // const sessions = smartSessions(sortedLogs, shiftDuration.StartTime, sessionDate);
-            let sessions = [];
-            if (startDate && endDate && userID) {
-                const singleUserLogs = attendanceLogs.filter(l => l.emp_code == userID);
-                sessions = await smartSessionsForSingleID(singleUserLogs, userID);
-            } else {
-                sessions = smartSessions(sortedLogs, shiftDuration.StartTime, sessionDate);
+            let checkIn = null;
+            let checkOut = null;
+            if (shiftStart) {
+                const io = await getCheckInOut(user.UserID, shiftStart, day);
+                checkIn = io.checkIn;
+                checkOut = io.checkOut;
             }
 
-            for (const session of sessions) {
-                const sessionDate = moment(session.checkIn).format('YYYY-MM-DD');
+            const requiredHours = await getHourlyRequiredHours(user.UserID);
 
-                const shift = await getShiftForUserOnDate(userId, sessionDate);
-                if (!shift) continue;
+            // Calculate all metrics using the new logic
+            const metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
 
-                const shiftDuration = await getShiftDurationOnDate(shift.ID, sessionDate);
-                if (!shiftDuration) continue;
+            results.push({
+                UserID: user.UserID,
+                Name: user.Name,
+                ProfilePicture: user.ProfilePicture,
+                DepartmentName: user.DepartmentName,
+                DesignationTitle: user.DesignationTitle,
+                CheckIn: checkIn,
+                CheckOut: checkOut,
+                Status: metrics.status,
+                LateMinutes: metrics.lateMinutes,
+                LeftEarlyMinutes: metrics.leftEarlyMinutes, // New Field
+                WorkingMinutes: metrics.workingMinutes,
+                ExtraHours: metrics.extraMinutes, // Updated Logic
+                shiftStart,
+                shiftEnd
+            });
+        }
 
-                const lateMinutes = calculateLate(session.checkIn, shiftDuration.StartTime);
-                // const workingMinutes = session.checkOut
-                //     ? calculateWorkMinutes(session.checkIn, session.checkOut)
-                //     : 0;
+        res.json(results);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
 
-                const isToday = moment(session.checkIn).isSame(moment(), 'day');
-                let status = 'Completed';
-                let workingMinutes = 0;
-                if (session.checkOut) {
-                    workingMinutes = calculateWorkMinutes(session.checkIn, session.checkOut);
-                } else {
-                    status = isToday ? 'Still inside premises.' : 'No checkout found in database.';
+// -------------------- /user API --------------------
+router.get('/user', async (req, res) => {
+    const { employeeId, startDate, endDate } = req.query;
+    if (!employeeId || !startDate || !endDate) return res.status(400).json({ error: 'Missing parameters' });
+
+    try {
+        const [users] = await con.execute(`
+            SELECT u.ID AS UserID, u.Name, u.ProfilePicture,
+                   d.DepartmentName, des.DesignationTitle
+            FROM UserDetails u
+            LEFT JOIN Departments d ON u.DepartmentID = d.ID
+            LEFT JOIN Designations des ON u.DesignationID = des.ID
+            WHERE u.ID = ? AND u.Status='Active'
+        `, [employeeId]);
+
+        if (!users.length) return res.status(404).json({ error: 'User not found' });
+        const user = users[0];
+
+        const results = [];
+        let curDate = moment(startDate);
+        const end = moment(endDate);
+
+        while (curDate <= end) {
+            const day = curDate.format('YYYY-MM-DD');
+
+            const shift = await getUserShift(user.UserID, day);
+            const shiftStart = shift?.StartTime;
+            const shiftEnd = shift?.EndTime;
+
+            let checkIn = null;
+            let checkOut = null;
+            if (shiftStart) {
+                const io = await getCheckInOut(user.UserID, shiftStart, day);
+                checkIn = io.checkIn;
+                checkOut = io.checkOut;
+            }
+
+            const requiredHours = await getHourlyRequiredHours(user.UserID);
+
+            // Calculate all metrics using the new logic
+            const metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
+
+            results.push({
+                UserID: user.UserID,
+                Name: user.Name,
+                ProfilePicture: user.ProfilePicture,
+                DepartmentName: user.DepartmentName,
+                DesignationTitle: user.DesignationTitle,
+                CheckIn: checkIn,
+                CheckOut: checkOut,
+                Status: metrics.status,
+                LateMinutes: metrics.lateMinutes,
+                LeftEarlyMinutes: metrics.leftEarlyMinutes, // New Field
+                WorkingMinutes: metrics.workingMinutes,
+                ExtraHours: metrics.extraMinutes, // Updated Logic
+                Date: day
+            });
+
+            curDate.add(1, 'day');
+        }
+
+        res.json(results);
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+
+// -------------------- /range API --------------------
+router.get('/range', async (req, res) => {
+    const { startDate, endDate } = req.query;
+    if (!startDate || !endDate) return res.status(400).json({ error: 'Missing parameters' });
+
+    try {
+        const [users] = await con.execute(`
+            SELECT u.ID AS UserID, u.Name, u.ProfilePicture,
+                   d.DepartmentName, des.DesignationTitle
+            FROM UserDetails u
+            LEFT JOIN Departments d ON u.DepartmentID = d.ID
+            LEFT JOIN Designations des ON u.DesignationID = des.ID
+            WHERE u.Status='Active'
+        `);
+
+        const results = [];
+
+        for (const user of users) {
+            let curDate = moment(startDate);
+            const end = moment(endDate);
+
+            while (curDate <= end) {
+                const day = curDate.format('YYYY-MM-DD');
+
+                const shift = await getUserShift(user.UserID, day);
+                const shiftStart = shift?.StartTime;
+                const shiftEnd = shift?.EndTime;
+
+                let checkIn = null;
+                let checkOut = null;
+                if (shiftStart) {
+                    const io = await getCheckInOut(user.UserID, shiftStart, day);
+                    checkIn = io.checkIn;
+                    checkOut = io.checkOut;
                 }
 
-                const checkInLocal = DateTime.fromISO(session.checkIn).setZone(PAKISTAN_TIMEZONE)
-                const checkOutLocal = session.checkOut ? DateTime.fromJSDate(session.checkOut).setZone('Asia/Karachi', { keepLocalTime: true }) : null;
-                finalResults.push({
-                    UserID: parseInt(userId),
-                    Name: logs[0].Name,
-                    Email: logs[0].Email,
-                    Designation: logs[0].Designation,
-                    ProfilePicture: logs[0].ProfilePicture,
-                    CheckIn: checkInLocal,
-                    CheckOut: checkOutLocal ? checkOutLocal : null,
-                    ShiftName: shift.name,
-                    ShiftStartTime: shiftDuration.startTime,
-                    ShiftEndTime: shiftDuration.endTime,
-                    lateMinutes: calculateLate(session.checkIn, shiftDuration.StartTime),
-                    workingMinutes,
-                    Status: status
+                const requiredHours = await getHourlyRequiredHours(user.UserID);
+
+                // Calculate all metrics using the new logic
+                const metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
+
+                results.push({
+                    UserID: user.UserID,
+                    Name: user.Name,
+                    ProfilePicture: user.ProfilePicture,
+                    DepartmentName: user.DepartmentName,
+                    DesignationTitle: user.DesignationTitle,
+                    CheckIn: checkIn,
+                    CheckOut: checkOut,
+                    Status: metrics.status,
+                    LateMinutes: metrics.lateMinutes,
+                    LeftEarlyMinutes: metrics.leftEarlyMinutes, // New Field
+                    WorkingMinutes: metrics.workingMinutes,
+                    ExtraHours: metrics.extraMinutes, // Updated Logic
+                    Date: day
                 });
+
+                curDate.add(1, 'day');
             }
         }
-        res.json(finalResults);
-    } catch (error) {
-        console.error(error);
-        res.status(500).json("Internal server error. Please try again later.");
+
+        res.json(results);
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 

@@ -206,12 +206,11 @@ router.get('/all-staff-attendance', async (req, res) => {
             if (!shiftDuration) continue;
             // const sessions = smartSessions(sortedLogs, shiftDuration.StartTime, sessionDate);
             let sessions = [];
-            if (userID && startDate && endDate) {
-                // Single employee with date range
-                sessions = await smartSessionsForSingleID(attendanceLogs, userID);
+            if (startDate && endDate && userID) {
+                const singleUserLogs = attendanceLogs.filter(l => l.emp_code == userID);
+                sessions = await smartSessionsForSingleID(singleUserLogs, userID);
             } else {
-                // Existing logic for all employees or single date
-                sessions = smartSessions(logsForDay, shiftStartTime, shiftDate);
+                sessions = smartSessions(sortedLogs, shiftDuration.StartTime, sessionDate);
             }
 
             for (const session of sessions) {
@@ -237,7 +236,7 @@ router.get('/all-staff-attendance', async (req, res) => {
                     status = isToday ? 'Still inside premises.' : 'No checkout found in database.';
                 }
 
-                const checkInLocal = DateTime.fromJSDate(session.checkIn).setZone('Asia/Karachi', { keepLocalTime: true });
+                const checkInLocal = DateTime.fromISO(session.checkIn).setZone(PAKISTAN_TIMEZONE)
                 const checkOutLocal = session.checkOut ? DateTime.fromJSDate(session.checkOut).setZone('Asia/Karachi', { keepLocalTime: true }) : null;
                 finalResults.push({
                     UserID: parseInt(userId),
@@ -262,67 +261,5 @@ router.get('/all-staff-attendance', async (req, res) => {
         res.status(500).json("Internal server error. Please try again later.");
     }
 });
-
-
-router.get('/my-attendance', async function (req, res) {
-    const { startDate, endDate, dated } = req.query;
-    const userID = req.user?.ID;
-    let baseQuery = `
-        SELECT 
-            iclock_transaction.emp_code AS EmpID,
-            iclock_transaction.punch_time
-        FROM iclock_transaction
-        JOIN personnel_employee 
-            ON iclock_transaction.emp_code = personnel_employee.emp_code
-        LEFT JOIN personnel_position 
-            ON personnel_employee.position_id = personnel_position.position_code
-        WHERE iclock_transaction.punch_state = '0'
-    `;
-
-    const params = [];
-
-    if (startDate && endDate) {
-        baseQuery += ` AND DATE(iclock_transaction.punch_time) BETWEEN ? AND ?`;
-        params.push(startDate, endDate);
-    } else {
-        return res.status(400).json({ error: "Provide either 'dated' or both 'startDate' and 'endDate'." });
-    }
-
-    if (userID) {
-        baseQuery += ` AND iclock_transaction.emp_code = 91`;
-        // params.push(userID);
-    }
-
-    baseQuery += ` ORDER BY iclock_transaction.punch_time DESC`;
-
-    try {
-        // 1️⃣ Query attendance DB
-        const [attendanceRows] = await attendanceDB.execute(baseQuery, params);
-
-        // 2️⃣ Fetch UserDetails from the other DB
-        const empIDs = [...new Set(attendanceRows.map(r => r.EmpID))];
-
-        let userDetails = [];
-        if (empIDs.length > 0) {
-            const placeholders = empIDs.map(() => '?').join(',');
-            const userQuery = `SELECT ID AS 'EmpID', Name, Email, Phone FROM UserDetails WHERE ID IN (${placeholders})`;
-            const [userRows] = await con.execute(userQuery, empIDs);
-            userDetails = userRows;
-        }
-
-        // 3️⃣ Merge the results
-        const final = attendanceRows.map(row => ({
-            ...row,
-            UserDetails: userDetails.find(u => u.EmpID === row.EmpID) || null
-        }));
-
-        res.json(final);
-
-    } catch (error) {
-        console.error(error);
-        res.status(500).json("Internal server error. Please try again later.");
-    }
-});
-
 
 module.exports = router;

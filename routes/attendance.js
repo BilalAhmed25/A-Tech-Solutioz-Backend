@@ -124,7 +124,7 @@ router.get('/day', async (req, res) => {
             FROM UserDetails u
             LEFT JOIN Departments d ON u.DepartmentID = d.ID
             LEFT JOIN Designations des ON u.DesignationID = des.ID
-            WHERE u.Status='Active'
+            WHERE u.Status='Active' AND d.ID != 5
         `);
 
         const results = [];
@@ -183,7 +183,7 @@ router.get('/user', async (req, res) => {
             FROM UserDetails u
             LEFT JOIN Departments d ON u.DepartmentID = d.ID
             LEFT JOIN Designations des ON u.DesignationID = des.ID
-            WHERE u.ID = ? AND u.Status='Active'
+            WHERE u.ID = ? AND u.Status='Active' AND d.ID != 5
         `, [employeeId]);
 
         if (!users.length) return res.status(404).json({ error: 'User not found' });
@@ -253,7 +253,7 @@ router.get('/range', async (req, res) => {
             FROM UserDetails u
             LEFT JOIN Departments d ON u.DepartmentID = d.ID
             LEFT JOIN Designations des ON u.DesignationID = des.ID
-            WHERE u.Status='Active'
+            WHERE u.Status='Active' AND d.ID != 5
         `);
 
         const results = [];

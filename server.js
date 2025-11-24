@@ -10,6 +10,7 @@ const express = require('express'),
     general = require('./routes/general'),
     invoice = require('./routes/invoice'),
     auth = require('./routes/auth'),
+    googleSheet = require('./routes/googleSheet'),
 
     { verifyToken } = require('./authMiddleware'),
     
@@ -47,6 +48,7 @@ app.use('/admin', admin);
 app.use('/attendance', attendance);
 app.use('/invoice', invoice);
 app.use('/general', general);
+app.use('/google', googleSheet);
 
 app.get('*', function (req, res) {
     // console.log('This is requested URL: ' + req.url);

@@ -2,6 +2,7 @@ var express = require('express'),
     multer = require('multer'),
     cloudinary = require('../cloudinaryConfig'),
     router = express.Router(),
+    { google } = require("googleapis"),
     { con } = require('../database');
 
 const storage = multer.memoryStorage();
@@ -59,6 +60,46 @@ router.post("/upload-lead-file", upload.array("files"), async (req, res) => {
     }
 });
 
+router.post("/publish-google-sheet", async (req, res) => {
+    try {
+        const { fileName, fileURL } = req.body;
+        if (!fileURL) {
+            return res.status(400).json({ error: "Google Sheet URL is required" });
+        }
+
+        // Extract Sheet ID
+        const match = fileURL.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+        if (!match) {
+            return res.status(400).json({ error: "Invalid Google Sheet URL." });
+        }
+
+        const sheetId = match[1];
+
+        // Authenticate
+        const auth = new google.auth.GoogleAuth({
+            keyFile: "./experts-crm-9d6ac1b67e39.json",
+            scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+        });
+
+        const sheets = google.sheets({ version: "v4", auth });
+        try {
+            await sheets.spreadsheets.get({ spreadsheetId: sheetId });
+        } catch (err) {
+            return res.status(403).json({
+                error: "Access denied. Please share the Google Sheet with sheets-reader@experts-crm.iam.gserviceaccount.com.",
+                details: err.message
+            });
+        }
+
+        const query = `INSERT INTO Files (FileName, FileType, FileURL, UploadedBy)VALUES (?, 'google-sheet', ?, ?)`;
+        const [result] = await con.execute(query, [fileName, fileURL, req.user.ID]);
+        return res.json({ success: true, message: "Google Sheet linked successfully!" });
+    } catch (error) {
+        console.error("Error:", error);
+        res.status(500).json("Internal Server Error.");
+    }
+});
+
 router.post('/update-file-details', async (req, res) => {
     try {
         const { fileName, fileID, access } = req.body;
@@ -79,7 +120,13 @@ router.delete("/delete-lead-file", async (req, res) => {
         // 1. Get file record from DB
         const [rows] = await con.query("SELECT * FROM Files WHERE ID = ?", [fileId]);
         if (!rows.length) return res.status(404).json({ message: "File not found" });
-
+        if (rows[0].UploadedBy !== userId) return res.status(403).json({ message: "You are not authorized to delete this file." });
+        if (rows[0].FileType === 'google-sheet') {
+            // Just delete from database
+            await con.query("DELETE FROM Files WHERE ID = ?", [fileId]);
+            return res.json("Google Sheet link deleted successfully.");
+        }
+        
         const file = rows[0];
         const fileURL = file.FileURL;
 

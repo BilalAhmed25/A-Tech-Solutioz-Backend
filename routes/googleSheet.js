@@ -24,7 +24,7 @@ function getCsvExportUrl(sheetUrl) {
 router.get("/get-my-google-sheets", async (req, res) => {
     try {
         const { ID } = req.user;
-        const [rows] = await con.query("SELECT ID, Name FROM `GoogleSheets` WHERE FIND_IN_SET(?, `Access`) ORDER BY ID DESC;", [ID]);
+        const [rows] = await con.query("SELECT ID, FileName FROM `Files` WHERE FIND_IN_SET(?, `Access`) AND FileType = 'google-sheet' ORDER BY ID DESC;", [ID]);
         res.json(rows);
 
     } catch (error) {
@@ -36,9 +36,9 @@ router.get("/get-my-google-sheets", async (req, res) => {
 router.get("/fetch-google-sheet", async (req, res) => {
     try {
         const { sheetID } = req.query;
-        const [rows] = await con.query("SELECT URL FROM GoogleSheets WHERE ID = ?;", [sheetID]);
+        const [rows] = await con.query("SELECT FileName, FileURL FROM Files WHERE ID = ?;", [sheetID]);
         if (!rows.length) return res.status(404).json({ message: "No sheet found in database." });
-        const sheetUrl = rows[0].URL;
+        const sheetUrl = rows[0].FileURL;
         // Extract Sheet ID
         const match = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
         if (!match) return res.status(400).json({ message: "Invalid sheet URL" });
@@ -52,7 +52,7 @@ router.get("/fetch-google-sheet", async (req, res) => {
         const sheets = google.sheets({ version: "v4", auth });
         const result = await sheets.spreadsheets.values.get({
             spreadsheetId: sheetId,
-            range: "Sheet1"
+            range: rows[0].FileName
         });
 
         const rowsData = result.data.values;
@@ -89,16 +89,16 @@ router.post("/update-google-sheet", async (req, res) => {
         // column = column name e.g. “Name”, "Phone"
 
         // 1. GET SHEET URL & SHEET ID
-        const [rows] = await con.query("SELECT URL FROM GoogleSheets WHERE ID = ?;", [sheetID]);
+        const [rows] = await con.query("SELECT FileName, FileURL FROM Files WHERE ID = ?;", [sheetID]);
         if (!rows.length) return res.status(404).json({ message: "No sheet found in database." });
 
-        const sheetUrl = rows[0].URL;
+        const sheetUrl = rows[0].FileURL;
         const { sheetId } = getCsvExportUrl(sheetUrl);
 
         // 2. GET COLUMN ORDER (header row)
         const sheetMeta = await sheets.spreadsheets.values.get({
             spreadsheetId: sheetId,
-            range: "Sheet1!1:1"   // HEADER ROW
+            range: `${rows[0].FileName}!1:1`   // HEADER ROW
         });
 
         const headers = sheetMeta.data.values[0];
@@ -114,7 +114,7 @@ router.post("/update-google-sheet", async (req, res) => {
 
         const columnLetter = String.fromCharCode(65 + colIndex); // A B C D...
 
-        const cellRange = `Sheet1!${columnLetter}${gRow}`;
+        const cellRange = `${rows[0].FileName}!${columnLetter}${gRow}`;
 
         // ------------------------------------------
         // UPDATE THE CELL IN GOOGLE SHEET

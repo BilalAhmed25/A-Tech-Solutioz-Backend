@@ -13,7 +13,7 @@ router.get('/get-files', async (req, res) => {
         const { ID, DepartmentID } = req.user;
         let query = "SELECT * FROM `Files`";
         if (DepartmentID !== 5) {
-            query += ` WHERE FIND_IN_SET(${ID}, Access)`;
+            query += ` WHERE FIND_IN_SET(${ID}, Access) AND FileType != 'google-sheet'`;
         }
         query += " ORDER BY ID DESC;";
         const [result] = await con.execute(query);

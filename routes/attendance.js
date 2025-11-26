@@ -173,8 +173,8 @@ router.get('/day', async (req, res) => {
 
 // -------------------- /user API --------------------
 router.get('/user', async (req, res) => {
-    const { user, startDate, endDate } = req.query;
-    if (!user || !startDate || !endDate) return res.status(400).json({ error: 'Missing parameters' });
+    const { userID, startDate, endDate } = req.query;
+    if (!userID || !startDate || !endDate) return res.status(400).json({ error: 'Missing parameters' });
 
     try {
         const [users] = await con.execute(`
@@ -184,8 +184,8 @@ router.get('/user', async (req, res) => {
             LEFT JOIN Departments d ON u.DepartmentID = d.ID
             LEFT JOIN Designations des ON u.DesignationID = des.ID
             WHERE u.ID = ? AND u.Status='Active' AND d.ID != 5
-        `, [user]);
-        console.log(users);
+        `, [userID]);
+
         if (!users.length) return res.status(404).json({ error: 'User not found' });
         const user = users[0];
 

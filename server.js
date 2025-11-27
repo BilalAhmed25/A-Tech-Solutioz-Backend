@@ -41,12 +41,12 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(bodyParser.json());
 
-app.use('/dialer', dialer);
 app.use("/auth", auth);
-// app.use(authenticateToken);
+app.use(authenticateToken);
 
 app.use('/hr', hr);
 app.use('/admin', admin);
+app.use('/dialer', dialer);
 app.use('/attendance', attendance);
 app.use('/invoice', invoice);
 app.use('/general', general);
@@ -57,4 +57,4 @@ app.get('*', function (req, res) {
     res.status(404).json('API not found.');
 });
 
-server.listen(300 || process.env.PORT, () => { })
+server.listen(300 || process.env.PORT, () => { });

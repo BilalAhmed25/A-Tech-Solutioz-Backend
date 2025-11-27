@@ -1,355 +1,303 @@
 require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
-const fs = require("fs-extra");
-const path = require("path");
-const axios = require("axios");
-const xlsx = require("xlsx");
-const { Mutex } = require("async-mutex");
 const Twilio = require("twilio");
-
-// Twilio Classes for Softphone
-const AccessToken = Twilio.jwt.AccessToken;
-const VoiceGrant = AccessToken.VoiceGrant;
-const VoiceResponse = Twilio.twiml.VoiceResponse;
+const { con } = require("../database");
 
 const router = express.Router();
+const VoiceResponse = Twilio.twiml.VoiceResponse;
+const AccessToken = Twilio.jwt.AccessToken;
+const VoiceGrant = AccessToken.VoiceGrant;
 
-// Config imports
-const cloudinary = require("../cloudinaryConfig"); // Ensure this is configured correctly
-// Note: We don't need twClient.calls.create anymore, the Browser SDK handles initiation.
+const { BASE_URL_FOR_TWILIO_CALLBACKS, TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, TWILIO_APP_SID, TWILIO_NUMBER } = process.env;
 
-// --- ENV CHECKS ---
-const {
-    BASE_URL,
-    DIALER_AGENT_NAME = "Agent",
-    TWILIO_ACCOUNT_SID,
-    TWILIO_API_KEY_SID,
-    TWILIO_API_KEY_SECRET,
-    TWILIO_APP_SID,
-    TWILIO_NUMBER
-} = process.env;
+/* ---------------- helpers ---------------- */
 
-const CLOUDINARY_FILE_URL = 'https://res.cloudinary.com/drfbtgfho/raw/upload/v1763880245/leads_files/rhak7lxjsdajsqnintum.xls';
-
-// Validation
-if (!BASE_URL || !TWILIO_API_KEY_SID || !TWILIO_APP_SID) {
-    console.error("CRITICAL: Missing .env variables for Softphone (API Keys or App SID).");
-    process.exit(1);
+function normalizePhone(p) {
+    if (p === null || p === undefined) return "";
+    return String(p).replace(/\D/g, "");
 }
-
-// Temporary storage for file processing
-const TMP_DIR = path.join(__dirname, "tmp");
-fs.ensureDirSync(TMP_DIR);
-
-// Mutex: Prevents multiple requests from corrupting the Excel file simultaneously
-const fileMutex = new Mutex();
-
-/* ---------- HELPER FUNCTIONS ---------- */
-
-// 1. Download File
-async function downloadFileFromUrl(fileUrl) {
-    // Determine extension, default to .xlsx if unknown
-    const ext = path.extname(fileUrl).split("?")[0] || ".xlsx";
-    const localFile = path.join(TMP_DIR, `leads_data${ext}`);
-
-    const writer = fs.createWriteStream(localFile);
-    const resp = await axios.get(fileUrl, { responseType: "stream" });
-
-    await new Promise((resolve, reject) => {
-        resp.data.pipe(writer);
-        let error = null;
-        writer.on("error", err => { error = err; writer.close(); reject(err); });
-        writer.on("close", () => { if (!error) resolve(); });
-    });
-    return localFile;
-}
-
-// 2. Safe File Transaction (Download -> Modify -> Upload)
-async function safeFileUpdate(callback) {
-    return await fileMutex.runExclusive(async () => {
-        let outPath = null;
-        try {
-            // A. Download
-            const localFile = await downloadFileFromUrl(CLOUDINARY_FILE_URL);
-
-            // B. Parse
-            const workbook = xlsx.readFile(localFile, { cellDates: true });
-            const sheetName = workbook.SheetNames[0];
-            const sheet = workbook.Sheets[sheetName];
-            let rows = xlsx.utils.sheet_to_json(sheet, { defval: "" });
-
-            // Capture headers to ensure we don't lose structure
-            let headers = xlsx.utils.sheet_to_json(sheet, { header: 1 })[0] || [];
-
-            // C. Execute Logic
-            const result = await callback(rows, headers);
-
-            // If callback returns false, it means "no changes needed"
-            if (result === false) return null;
-
-            // D. Save to Buffer
-            const ws = xlsx.utils.json_to_sheet(rows, { header: headers });
-            const wb = xlsx.utils.book_new();
-            xlsx.utils.book_append_sheet(wb, ws, sheetName);
-
-            outPath = path.join(TMP_DIR, `upload_${Date.now()}.xlsx`);
-            xlsx.writeFile(wb, outPath);
-
-            // E. Upload (Overwrite)
-            // Extract public_id from URL to ensure we overwrite the same file
-            // Logic: splits by '/' takes last part, removes extension
-            const filename = CLOUDINARY_FILE_URL.split("/").pop();
-            const publicId = filename.substring(0, filename.lastIndexOf('.')) || filename;
-
-            await cloudinary.uploader.upload(outPath, {
-                resource_type: "raw",
-                public_id: publicId,
-                overwrite: true,
-                use_filename: true,
-                unique_filename: false,
-                folder: "leads_files" // Ensure this matches your folder structure
-            });
-
-            return result;
-        } catch (error) {
-            console.error("File update failed:", error);
-            throw error;
-        } finally {
-            // Cleanup
-            if (outPath) await fs.remove(outPath).catch(() => { });
-        }
-    });
-}
-
-/* ---------- 1. SOFTPHONE AUTH ---------- */
 
 /**
- * GET /token
- * Generates a Capability Token for the React Frontend to use the Microphone
+ * insertCallLog - idempotent by CallSID when provided.
+ * Stores Phone, CallSID, Status, DialedBy, Duration, RecordingUrl, createdAt.
  */
-router.get("/token", (req, res) => {
-    console.log("Generating token for agent:", DIALER_AGENT_NAME);
+const insertCallLog = async (phone = "", status = "", dialedBy = "", callSid = null, duration = null, recordingUrl = null) => {
     try {
-        const identity = DIALER_AGENT_NAME + "_" + Math.floor(Math.random() * 1000);
+        const normalized = normalizePhone(phone);
 
-        const voiceGrant = new VoiceGrant({
-            outgoingApplicationSid: TWILIO_APP_SID,
-            incomingAllow: true, // Set to false if you don't want to receive calls
-        });
+        // If CallSID provided, ensure idempotency by CallSID
+        if (callSid) {
+            const [existing] = await con.query(`SELECT ID FROM CallLogs WHERE CallSID = ? LIMIT 1`, [callSid]);
+            if (existing && existing.length > 0) {
+                // Update metadata (duration / recordingUrl / status / dialedBy) if more info arrives later
+                await con.query(
+                    `UPDATE CallLogs SET Status = ?, DialedBy = ?, Duration = ?, RecordingUrl = ? WHERE CallSID = ?`,
+                    [status || "", dialedBy || "", duration != null ? Number(duration) : null, recordingUrl || null, callSid]
+                );
+                return;
+            }
+        }
 
+        // No CallSID or no existing entry — create a new CallLog record
+        await con.query(
+            `INSERT INTO CallLogs (Phone, CallSID, Status, DialedBy, Duration, RecordingUrl, CreatedAt)
+             VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+            [normalized || "", callSid || null, status || "", dialedBy || "", duration != null ? Number(duration) : null, recordingUrl || null]
+        );
+    } catch (err) {
+        console.error("insertCallLog error:", err);
+    }
+};
+
+/* ---------------- /token ---------------- */
+
+router.get("/token", (req, res) => {
+    try {
+        const identity = String(req.user?.ID || "agent") + "_" + Math.floor(Math.random() * 10000);
         const token = new AccessToken(
             TWILIO_ACCOUNT_SID,
             TWILIO_API_KEY_SID,
             TWILIO_API_KEY_SECRET,
-            { identity: identity }
+            { identity }
         );
 
-        token.addGrant(voiceGrant);
-        res.json({
-            token: token.toJwt(),
-            identity: identity
-        });
+        token.addGrant(
+            new VoiceGrant({
+                outgoingApplicationSid: TWILIO_APP_SID,
+                incomingAllow: true
+            })
+        );
+
+        res.json({ token: token.toJwt(), identity });
     } catch (err) {
-        console.error("Token Error:", err);
-        res.status(500).json({ error: "Failed to generate token" });
+        res.status(500).json({ error: "Token generation failed" });
     }
 });
 
-/* ---------- 2. TWILIO WEBHOOKS (Voice Logic) ---------- */
+/* ---------------- outbound TwiML ---------------- */
 
-/**
- * POST /twilio/voice-handler
- * Triggered when the Browser SDK calls .connect({ To: '+123...' })
- * This instructs Twilio to connect the Browser to the Lead.
- */
-router.post("/twilio/voice-handler", (req, res) => {
+router.post("/twilio/voice-handler", bodyParser.urlencoded({ extended: false }), (req, res) => {
     const { To } = req.body;
     const response = new VoiceResponse();
 
-    if (To) {
-        // We are dialing an external number (The Lead)
-        const dial = response.dial({
-            callerId: TWILIO_NUMBER, // The number the Lead sees on their Caller ID
-            answerOnBridge: true,    // Good for softphones
-            // Status callbacks to track "Ringing", "Busy", "No Answer"
-            statusCallback: `${BASE_URL}/api/twilio/call-status`,
-            statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
-            statusCallbackMethod: 'POST'
-        });
-
-        // Dial the number sent from Frontend
-        dial.number(To);
-    } else {
+    if (!To) {
         response.say("Invalid number provided.");
+        return res.type("text/xml").send(response.toString());
     }
+
+    const dial = response.dial({
+        callerId: TWILIO_NUMBER,
+        answerOnBridge: true,
+        statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/twilio/call-status`,
+        statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'failed', 'busy', 'no-answer', 'canceled'],
+        statusCallbackMethod: 'POST'
+    });
+    dial.number(To);
 
     res.type("text/xml").send(response.toString());
 });
 
-/**
- * POST /twilio/call-status
- * Webhook for Call Events (Ringing, Completed, Busy, etc.)
- */
+/* ---------------- Twilio status webhook ----------------
+   - Always insert/update CallLogs with CallSID, RecordingUrl, Duration, Status
+   - Update DialingData but ONLY Status (no other columns)
+------------------------------------------------------------------ */
 router.post("/twilio/call-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
-    const { CallSid, CallStatus } = req.body;
-    console.log(`Twilio Event: ${CallSid} -> ${CallStatus}`);
+    const {
+        CallSid,         // Twilio uses CallSid (case variations exist)
+        CallSID,         // handle both
+        CallStatus,
+        To,
+        From,
+        CallDuration,
+        RecordingUrl
+    } = req.body;
+
+    const callSid = CallSid || CallSID || null;
+    const status = String(CallStatus || "").toLowerCase();
+    const phoneRaw = To || From || "";
+    const phoneNormalized = normalizePhone(phoneRaw);
 
     try {
-        await safeFileUpdate((rows) => {
-            // Find row by callSid
-            const row = rows.find(r => r.callSid === CallSid);
-            if (!row) return false; // Not found, don't upload
+        // 1) Insert/update CallLogs (CallSID, status, duration, recordingUrl) — idempotent by CallSID
+        await insertCallLog(phoneNormalized, status, "Twilio", callSid, CallDuration ? Number(CallDuration) : null, RecordingUrl || null);
 
-            // Map Twilio status to your Excel logic
-            // Note: We don't overwrite if it's already "Sale" or "Dispositioned" manually
-            if (['busy', 'no-answer', 'failed', 'canceled'].includes(CallStatus)) {
-                row.status = "No Answer";
-            } else if (CallStatus === 'in-progress') {
-                row.status = "Live Call";
-            }
+        // 2) Update DialingData -> only Status column
+        // Find matching lead by CallSID first, fallback to last matching phone
+        let lead = null;
+        if (callSid) {
+            const [r] = await con.query(`SELECT LeadID FROM DialingData WHERE CallSID = ? LIMIT 1`, [callSid]);
+            if (r && r.length) lead = r[0];
+        }
 
-            row.updated_at = new Date().toISOString();
-            return true;
-        });
+        if (!lead && phoneNormalized) {
+            const [r2] = await con.query(
+                `SELECT LeadID FROM DialingData WHERE REPLACE(REPLACE(REPLACE(Phone, ' ', ''), '-', ''), '+', '') LIKE ? ORDER BY LeadID DESC LIMIT 1`,
+                [`%${phoneNormalized}%`]
+            );
+            if (r2 && r2.length) lead = r2[0];
+        }
+
+        if (lead && typeof status === "string") {
+            // IMPORTANT: Only update the Status column — nothing else on DialingData.
+            await con.query(`UPDATE DialingData SET Status = ? WHERE LeadID = ?`, [status, lead.LeadID]);
+        }
     } catch (err) {
-        console.error("Webhook Error:", err);
+        console.error("Error in call-status webhook:", err);
     }
 
+    // Reply quickly to Twilio
     res.sendStatus(200);
 });
 
-/* ---------- 3. CRM / LEAD MANAGEMENT API ---------- */
-
-/**
- * GET /next
- * Fetches next un-dialed number
- */
+/* ---------------- GET next lead ----------------
+   Return normalized phone and full details in 'details'
+------------------------------------------------------------------ */
 router.get("/next", async (req, res) => {
     try {
-        const result = await fileMutex.runExclusive(async () => {
-            const localFile = await downloadFileFromUrl(CLOUDINARY_FILE_URL);
-            const workbook = xlsx.readFile(localFile);
-            const sheet = workbook.Sheets[workbook.SheetNames[0]];
-            const rows = xlsx.utils.sheet_to_json(sheet, { defval: "" });
+        const [rows] = await con.query(
+            `SELECT LeadID, Phone, Name, LeadType, Budget, Comments, DialedBy, Status
+             FROM DialingData
+             WHERE (Status IS NULL OR Status = '')
+             ORDER BY LeadID ASC LIMIT 1`
+        );
 
-            // Logic: Find first row where status is empty or 'New'
-            // Adjust 'status' key based on your exact excel header casing
-            const rowIndex = rows.findIndex(r => {
-                const s = String(r.status || r.Status || "").toLowerCase();
-                return s === "" || s === "new";
-            });
+        if (!rows || rows.length === 0) return res.json({ success: true, number: null, message: "List finished." });
 
-            if (rowIndex === -1) return null;
-            return { row: rows[rowIndex], index: rowIndex };
-        });
-
-        if (!result) return res.json({ message: "List finished", number: null });
-
-        // Robust Phone Parser
-        const row = result.row;
-        const phoneKey = Object.keys(row).find(k => {
-            const key = String(k).toLowerCase();
-            return key.includes("phone") || key.includes("mobile") || key.includes("number");
-        });
-
-        const rawNumber = phoneKey ? row[phoneKey] : "";
-        const cleanNumber = String(rawNumber).replace(/\D/g, ""); // Remove non-digits
-
-        res.json({
-            success: true,
-            number: cleanNumber,
-            rowIndex: result.index,
-            row: row
-        });
-
+        const row = rows[0];
+        return res.json({ success: true, number: normalizePhone(row.Phone || ""), details: row });
     } catch (err) {
+        console.error("GET /next error:", err);
         res.status(500).json({ error: err.message });
     }
 });
 
-/**
- * POST /start
- * Called by Frontend when dialing starts to lock the row
- */
-router.post("/start", async (req, res) => {
+/* ---------------- POST /start ----------------
+   Agent starts dialing (manual or live). Update DialingData.Status='Dialing' only.
+   Also insert a CallLog record for manual dials (no CallSID yet).
+------------------------------------------------------------------ */
+router.post("/start", bodyParser.json(), async (req, res) => {
     try {
-        const { number, rowIndex } = req.body;
+        const { number } = req.body;
+        const empID = String(req.user?.ID || "agent");
+        const phone = normalizePhone(number);
 
-        await safeFileUpdate((rows, headers) => {
-            if (!rows[rowIndex]) return false;
+        // Update only Status on DialingData
+        await con.query(`UPDATE DialingData SET Status = 'Dialing', DialedBy = ? WHERE Phone = ?`, [empID, phone]);
 
-            // Ensure headers exist
-            if (!headers.includes("callSid")) headers.push("callSid");
-            if (!headers.includes("status")) headers.push("status");
+        // Insert CallLog for manual dial (no CallSID yet)
+        await insertCallLog(phone, "dialing", empID, null, null, null);
 
-            // Temporary ID until Twilio connects (Frontend will update or Webhook will update)
-            // But we mark it "Dialing" so next agent doesn't grab it
-            rows[rowIndex].status = "Dialing";
-            rows[rowIndex].dialed_by = DIALER_AGENT_NAME;
-            rows[rowIndex].updated_at = new Date().toISOString();
-
-            return true;
-        });
-
-        res.json({ success: true });
+        return res.json({ success: true, locked: true });
     } catch (err) {
+        console.error("POST /start error:", err);
         res.status(500).json({ error: err.message });
     }
 });
 
-/**
- * POST /end
- * Save manual disposition (Sale, Callback, etc.)
- */
-router.post("/end", async (req, res) => {
+/* ---------------- attach-callsid ----------------
+   - DO NOT touch DialingData except Status (as rule).
+   - This endpoint will ensure CallSID is recorded on CallLogs.
+   - If an existing CallLog for the phone exists without CallSID, it will update that record.
+   - Otherwise it will insert a new CallLog with the CallSID.
+------------------------------------------------------------------ */
+router.post("/attach-callsid", bodyParser.json(), async (req, res) => {
     try {
-        const { callSid, disposition } = req.body;
+        const { id, callSid } = req.body;
+        if (!id || !callSid) return res.status(400).json({ error: "id and callSid required" });
 
-        await safeFileUpdate((rows) => {
-            // Try to find by CallSid first (most accurate)
-            let row = rows.find(r => r.callSid === callSid);
+        // Find lead phone by LeadID
+        const [leadRows] = await con.query(`SELECT Phone, DialedBy FROM DialingData WHERE LeadID = ? LIMIT 1`, [id]);
+        if (!leadRows || leadRows.length === 0) return res.status(404).json({ error: "Lead not found" });
 
-            // If callSid failed to save earlier, we might need a fallback logic, 
-            // but for now, rely on callSid.
-            if (!row) {
-                // Optional: You could pass rowIndex from frontend as fallback
-                return false;
-            }
+        const phone = normalizePhone(leadRows[0].Phone || "");
+        const dialedBy = String(leadRows[0].DialedBy || req.user?.ID || "agent");
 
-            row.status = disposition;
-            row.updated_at = new Date().toISOString();
-            return true;
-        });
+        // Try to find a recent CallLog for this phone with empty CallSID
+        const [logs] = await con.query(
+            `SELECT ID FROM CallLogs WHERE Phone = ? AND (CallSID IS NULL OR CallSID = '') ORDER BY ID DESC LIMIT 1`,
+            [phone]
+        );
 
-        res.json({ success: true });
+        if (logs && logs.length) {
+            // Update the most recent CallLog's CallSID
+            await con.query(`UPDATE CallLogs SET CallSID = ? WHERE ID = ?`, [callSid, logs[0].ID]);
+        } else {
+            // Insert a new CallLog with CallSID
+            await insertCallLog(phone, "dialing", dialedBy, callSid, null, null);
+        }
+
+        return res.json({ success: true });
     } catch (err) {
+        console.error("attach-callsid error:", err);
         res.status(500).json({ error: err.message });
     }
 });
 
-/**
- * GET /check-status/:callSid
- * Used by Auto-Dialer frontend to know if it should skip
- */
-router.get("/check-status/:callSid", async (req, res) => {
+/* ---------------- POST /end ----------------
+   Agent final disposition:
+   - Update DialingData.Status = disposition (ONLY Status)
+   - Insert/Update CallLogs with CallSID, Duration, RecordingUrl, and disposition
+------------------------------------------------------------------ */
+router.post("/end", bodyParser.json(), async (req, res) => {
     try {
-        const { callSid } = req.params;
+        const { callSid, leadID, disposition, duration, recordingUrl, phone } = req.body;
+        const empID = String(req.user?.ID || "agent");
+        if (!disposition) return res.status(400).json({ error: "disposition required" });
 
-        const result = await fileMutex.runExclusive(async () => {
-            const localFile = await downloadFileFromUrl(CLOUDINARY_FILE_URL);
-            const workbook = xlsx.readFile(localFile);
-            const sheet = workbook.Sheets[workbook.SheetNames[0]];
-            const rows = xlsx.utils.sheet_to_json(sheet, { defval: "" });
+        // Normalize phone for call-log
+        const phoneForLog = normalizePhone(phone || "");
 
-            const row = rows.find(r => r.callSid === callSid);
-            return row ? row.status : null;
-        });
+        // 1) Update DialingData -> ONLY Status
+        if (leadID) {
+            await con.query(`UPDATE DialingData SET Status = ? WHERE LeadID = ?`, [disposition, leadID]);
+        } else if (phoneForLog) {
+            // fallback: update by phone (best-effort)
+            await con.query(
+                `UPDATE DialingData SET Status = ? WHERE REPLACE(REPLACE(REPLACE(Phone, ' ', ''), '-', ''), '+', '') LIKE ? ORDER BY LeadID DESC LIMIT 1`,
+                [disposition, `%${phoneForLog}%`]
+            );
+        }
 
-        if (!result) return res.status(404).json({ status: 'unknown' });
+        // 2) Insert or update CallLogs with user-provided metadata (CallSID, duration, recordingUrl)
+        await insertCallLog(phoneForLog, disposition, empID, callSid || null, duration != null ? Number(duration) : null, recordingUrl || null);
 
-        res.json({ status: String(result).toLowerCase() });
+        return res.json({ success: true });
     } catch (err) {
+        console.error("POST /end error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/* ---------------- check-status ----------------
+   Check DialingData.Status by CallSID
+------------------------------------------------------------------ */
+router.get("/check-status", async (req, res) => {
+    try {
+        const { callSid } = req.query;
+        if (!callSid) return res.status(400).json({ error: "callSid required" });
+
+        const [rows] = await con.query(`SELECT Status FROM DialingData WHERE CallSID = ? LIMIT 1`, [callSid]);
+        if (!rows || rows.length === 0) return res.status(404).json({ status: "unknown" });
+
+        res.json({ status: String(rows[0].Status || "").toLowerCase() });
+    } catch (err) {
+        console.error("GET /check-status error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/* ---------------- fetch lead ---------------- */
+
+router.get("/lead/:leadID", async (req, res) => {
+    try {
+        const { leadID } = req.params;
+        const [rows] = await con.query(`SELECT * FROM DialingData WHERE LeadID = ? LIMIT 1`, [leadID]);
+        if (!rows || rows.length === 0) return res.status(404).json({ error: "Lead not found" });
+
+        res.json({ success: true, row: rows[0] });
+    } catch (err) {
+        console.error("GET /lead/:id error:", err);
         res.status(500).json({ error: err.message });
     }
 });

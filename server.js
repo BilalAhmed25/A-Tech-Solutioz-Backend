@@ -7,6 +7,7 @@ const express = require('express'),
     hr = require('./routes/hr'),
     admin = require('./routes/administrator'),
     attendance = require('./routes/attendance'),
+    dialer = require('./routes/dialer'),
     general = require('./routes/general'),
     invoice = require('./routes/invoice'),
     auth = require('./routes/auth'),
@@ -40,8 +41,9 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(bodyParser.json());
 
+app.use('/dialer', dialer);
 app.use("/auth", auth);
-app.use(authenticateToken);
+// app.use(authenticateToken);
 
 app.use('/hr', hr);
 app.use('/admin', admin);

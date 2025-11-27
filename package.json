@@ -10,19 +10,22 @@
     "nodemon": "^3.1.10"
   },
   "dependencies": {
-    "axios": "^1.9.0",
-    "body-parser": "^1.20.0",
-    "cloudinary": "^1.26.0",
+    "async-mutex": "^0.5.0",
+    "axios": "^1.13.2",
+    "body-parser": "^1.20.3",
+    "cloudinary": "^1.41.3",
     "cors": "^2.8.5",
     "crypto": "^1.0.1",
+    "csv-parse": "^6.1.0",
     "csv-parser": "^3.2.0",
-    "dotenv": "^16.4.5",
+    "dotenv": "^16.6.1",
     "experss": "^0.0.1-security",
     "express": "^4.21.2",
     "express-mysql-session": "^3.0.3",
     "express-session": "^1.17.3",
     "firebase-admin": "^13.6.0",
     "fs": "^0.0.1-security",
+    "fs-extra": "^11.3.2",
     "googleapis": "^152.0.0",
     "html-pdf": "^3.0.1",
     "http": "^0.0.1-security",
@@ -40,6 +43,8 @@
     "path": "^0.12.7",
     "pdfkit": "^0.17.1",
     "square": "^43.2.0",
-    "stripe": "^18.1.1"
+    "stripe": "^18.1.1",
+    "twilio": "^5.10.6",
+    "xlsx": "^0.18.5"
   }
 }

@@ -41,9 +41,8 @@ const insertCallLog = async (phone = "", status = "", dialedBy = "", callSid = n
 
         // No CallSID or no existing entry — create a new CallLog record
         await con.query(
-            `INSERT INTO CallLogs (Phone, CallSID, Status, DialedBy, Duration, RecordingUrl, CreatedAt)
-             VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-            [normalized || "", callSid || null, status || "", dialedBy || "", duration != null ? Number(duration) : null, recordingUrl || null]
+            `INSERT INTO CallLogs (Phone, CallSID, Status, DialedBy, Duration, RecordingUrl) VALUES (?, ?, ?, ?, ?, ?)`,
+            [normalized || "", callSid || '', status || "", dialedBy || "", duration != null ? Number(duration) : '', recordingUrl || '']
         );
     } catch (err) {
         console.error("insertCallLog error:", err);

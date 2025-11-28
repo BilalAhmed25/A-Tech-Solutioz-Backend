@@ -7,6 +7,7 @@ const express = require('express'),
     hr = require('./routes/hr'),
     admin = require('./routes/administrator'),
     attendance = require('./routes/attendance'),
+    twilio = require('./routes/twilio'),
     dialer = require('./routes/dialer'),
     general = require('./routes/general'),
     invoice = require('./routes/invoice'),
@@ -46,6 +47,7 @@ app.use(authenticateToken);
 
 app.use('/hr', hr);
 app.use('/admin', admin);
+app.use('/twilio', twilio);
 app.use('/dialer', dialer);
 app.use('/attendance', attendance);
 app.use('/invoice', invoice);

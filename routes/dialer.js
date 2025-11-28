@@ -5,11 +5,10 @@ const Twilio = require("twilio");
 const { con } = require("../database");
 
 const router = express.Router();
-const VoiceResponse = Twilio.twiml.VoiceResponse;
 const AccessToken = Twilio.jwt.AccessToken;
 const VoiceGrant = AccessToken.VoiceGrant;
 
-const { BASE_URL_FOR_TWILIO_CALLBACKS, TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, TWILIO_APP_SID, TWILIO_NUMBER } = process.env;
+const { TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, TWILIO_APP_SID } = process.env;
 
 /* ---------------- helpers ---------------- */
 
@@ -74,80 +73,6 @@ router.get("/token", (req, res) => {
     }
 });
 
-/* ---------------- outbound TwiML ---------------- */
-
-router.post("/twilio/voice-handler", bodyParser.urlencoded({ extended: false }), (req, res) => {
-    const { To } = req.body;
-    const response = new VoiceResponse();
-
-    if (!To) {
-        response.say("Invalid number provided.");
-        return res.type("text/xml").send(response.toString());
-    }
-
-    const dial = response.dial({
-        callerId: TWILIO_NUMBER,
-        answerOnBridge: true,
-        statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/twilio/call-status`,
-        statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'failed', 'busy', 'no-answer', 'canceled'],
-        statusCallbackMethod: 'POST'
-    });
-    dial.number(To);
-
-    res.type("text/xml").send(response.toString());
-});
-
-/* ---------------- Twilio status webhook ----------------
-   - Always insert/update CallLogs with CallSID, RecordingUrl, Duration, Status
-   - Update DialingData but ONLY Status (no other columns)
------------------------------------------------------------------- */
-router.post("/twilio/call-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
-    const {
-        CallSid,         // Twilio uses CallSid (case variations exist)
-        CallSID,         // handle both
-        CallStatus,
-        To,
-        From,
-        CallDuration,
-        RecordingUrl
-    } = req.body;
-
-    const callSid = CallSid || CallSID || null;
-    const status = String(CallStatus || "").toLowerCase();
-    const phoneRaw = To || From || "";
-    const phoneNormalized = normalizePhone(phoneRaw);
-
-    try {
-        // 1) Insert/update CallLogs (CallSID, status, duration, recordingUrl) — idempotent by CallSID
-        await insertCallLog(phoneNormalized, status, "Twilio", callSid, CallDuration ? Number(CallDuration) : null, RecordingUrl || null);
-
-        // 2) Update DialingData -> only Status column
-        // Find matching lead by CallSID first, fallback to last matching phone
-        let lead = null;
-        if (callSid) {
-            const [r] = await con.query(`SELECT LeadID FROM DialingData WHERE CallSID = ? LIMIT 1`, [callSid]);
-            if (r && r.length) lead = r[0];
-        }
-
-        if (!lead && phoneNormalized) {
-            const [r2] = await con.query(
-                `SELECT LeadID FROM DialingData WHERE REPLACE(REPLACE(REPLACE(Phone, ' ', ''), '-', ''), '+', '') LIKE ? ORDER BY LeadID DESC LIMIT 1`,
-                [`%${phoneNormalized}%`]
-            );
-            if (r2 && r2.length) lead = r2[0];
-        }
-
-        if (lead && typeof status === "string") {
-            // IMPORTANT: Only update the Status column — nothing else on DialingData.
-            await con.query(`UPDATE DialingData SET Status = ? WHERE LeadID = ?`, [status, lead.LeadID]);
-        }
-    } catch (err) {
-        console.error("Error in call-status webhook:", err);
-    }
-
-    // Reply quickly to Twilio
-    res.sendStatus(200);
-});
 
 /* ---------------- GET next lead ----------------
    Return normalized phone and full details in 'details'

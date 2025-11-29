@@ -3,7 +3,8 @@ var express = require('express'),
     cloudinary = require('../cloudinaryConfig'),
     router = express.Router(),
     { google } = require("googleapis"),
-    { con } = require('../database');
+    { con } = require('../database'),
+    csv = require("csv");
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
@@ -24,39 +25,113 @@ router.get('/get-files', async (req, res) => {
     }
 });
 
-router.post("/upload-lead-file", upload.array("files"), async (req, res) => {
+router.post("/upload-leads", upload.single("file"), async (req, res) => {
     try {
         const userId = req.user?.ID;
         if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-        const uploadResults = [];
+        const { mapping } = req.body;
+        if (!mapping) return res.status(400).json({ error: "Column mapping is required" });
 
-        for (const file of req.files) {
-            const b64 = Buffer.from(file.buffer).toString("base64");
-            const dataURI = `data:${file.mimetype};base64,${b64}`;
-
-            const fileExt = file.originalname.split(".").pop();
-            const result = await cloudinary.uploader.upload(dataURI, {
-                folder: "leads_files",
-                resource_type: "raw",
-                format: fileExt,
-            });
-
-            // Save in DB
-            const [insert] = await con.query(`INSERT INTO Files (FileName, FileType, FileURL, UploadedBy) VALUES (?, ?, ?, ?)`, [file.originalname, file.mimetype, result.secure_url, userId]);
-
-            uploadResults.push({
-                id: insert.insertId,
-                name: file.originalname,
-                type: file.mimetype,
-                url: result.secure_url,
-            });
+        // -------------------------------
+        // 1. Parse mapping JSON
+        // -------------------------------
+        let mappingObj;
+        if (typeof mapping === "string") {
+            try {
+                mappingObj = JSON.parse(mapping); // { CSVHeader: DBColumn, ... }
+            } catch (err) {
+                console.error("Invalid mapping JSON:", mapping);
+                return res.status(400).json({ error: "Invalid mapping format" });
+            }
+        } else if (typeof mapping === "object") {
+            mappingObj = mapping;
+        } else {
+            return res.status(400).json({ error: "Invalid mapping format" });
         }
 
-        res.json("Files uploaded successfully");
-    } catch (error) {
-        console.error("Upload error: ", error);
-        res.status(500).json({ error: "Upload failed" });
+        // Whitelist of allowed DB columns (adjust to your table schema)
+        const allowedColumns = ["Phone", "Name", "Email", "LeadType", "Budget", "Comments"];
+        const mappedColumns = Object.values(mappingObj).filter(Boolean);
+        for (const col of mappedColumns) {
+            if (!allowedColumns.includes(col)) {
+                return res.status(400).json({ error: `Invalid mapped column: ${col}` });
+            }
+        }
+
+        // -------------------------------
+        // 2. Validate file
+        // -------------------------------
+        const file = req.file;
+        if (!file) return res.status(400).json({ error: "No file uploaded" });
+
+        // Upload to Cloudinary
+        const b64 = Buffer.from(file.buffer).toString("base64");
+        const dataURI = `data:${file.mimetype};base64,${b64}`;
+        const fileExt = file.originalname.split(".").pop();
+
+        const cloudRes = await cloudinary.uploader.upload(dataURI, {
+            folder: "leads_files",
+            resource_type: "raw",
+            format: fileExt,
+        });
+
+        // Save file record
+        const [insertFile] = await con.query(
+            `INSERT INTO Files (FileName, FileType, FileURL, UploadedBy) VALUES (?, ?, ?, ?)`,
+            [file.originalname, file.mimetype, cloudRes.secure_url, userId]
+        );
+        const fileId = insertFile.insertId;
+
+        // -------------------------------
+        // 3. Parse CSV
+        // -------------------------------
+        const csvData = file.buffer.toString("utf8");
+        const rows = [];
+        csv.parse(csvData, { columns: true, trim: true })
+            .on("data", (row) => rows.push(row))
+            .on("end", async () => {
+                try {
+                    const insertPromises = rows.map(async (row) => {
+                        const dbCols = [];
+                        const values = [];
+
+                        // Map CSV columns to DB columns
+                        for (const csvCol in mappingObj) {
+                            const dbCol = mappingObj[csvCol];
+                            if (!dbCol) continue;
+                            dbCols.push(`\`${dbCol}\``); // Escape column name
+                            values.push(row[csvCol] ?? null);
+                        }
+
+                        // Add FileID
+                        dbCols.push("`FileID`");
+                        values.push(fileId);
+
+                        const placeholders = dbCols.map(() => "?").join(", ");
+                        const sql = `INSERT INTO DialingData (${dbCols.join(", ")}) VALUES (${placeholders})`;
+
+                        return con.query(sql, values);
+                    });
+
+                    await Promise.all(insertPromises);
+                    return res.json({
+                        message: "File and leads uploaded successfully.",
+                        fileId,
+                        totalInserted: rows.length,
+                    });
+                } catch (err) {
+                    console.error("DB Insert Error:", err);
+                    return res.status(500).json({ error: "Failed to insert leads into database" });
+                }
+            })
+            .on("error", (err) => {
+                console.error("CSV Parse Error:", err);
+                return res.status(500).json({ error: "Failed to parse CSV file" });
+            });
+    } catch (err) {
+        console.error("Upload error:", err);
+        return res.status(500).json({ error: "Upload failed" });
     }
 });
 
@@ -126,7 +201,7 @@ router.delete("/delete-lead-file", async (req, res) => {
             await con.query("DELETE FROM Files WHERE ID = ?", [fileId]);
             return res.json("Google Sheet link deleted successfully.");
         }
-        
+
         const file = rows[0];
         const fileURL = file.FileURL;
 
@@ -141,6 +216,7 @@ router.delete("/delete-lead-file", async (req, res) => {
         await cloudinary.uploader.destroy(publicId, { resource_type: "raw" });
 
         // 4. Delete from database
+        await con.query("DELETE FROM DialingData WHERE FileID = ?", [fileId]);
         await con.query("DELETE FROM Files WHERE ID = ?", [fileId]);
 
         res.json("File deleted successfully.");

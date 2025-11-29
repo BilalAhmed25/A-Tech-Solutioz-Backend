@@ -51,11 +51,11 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(bodyParser.json());
 
 app.use("/auth", auth);
+app.use('/twilio', twilio);
 app.use(authenticateToken);
 
 app.use('/hr', hr);
 app.use('/admin', admin);
-app.use('/twilio', twilio);
 app.use('/dialer', dialer);
 app.use('/attendance', attendance);
 app.use('/invoice', invoice);

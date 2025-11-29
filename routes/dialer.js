@@ -106,11 +106,7 @@ router.post("/start", bodyParser.json(), async (req, res) => {
         const empID = String(req.user?.ID || "agent");
         const phone = normalizePhone(number);
 
-        // Update only Status on DialingData
         await con.query(`UPDATE DialingData SET Status = 'Dialing', DialedBy = ? WHERE Phone = ?`, [empID, phone]);
-
-        // Insert CallLog for manual dial (no CallSID yet)
-        await insertCallLog(phone, "dialing", empID, null, null, null);
 
         return res.json({ success: true, locked: true });
     } catch (err) {

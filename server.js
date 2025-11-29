@@ -20,32 +20,33 @@ const express = require('express'),
     server = http.createServer(app)
     ;
 
-    const allowedOrigins = [
-        'http://localhost:5173',
-        'http://127.0.0.1:5500/',
-        'https://crm.a-techsolutionz.com',
-    ];
+const allowedOrigins = [
+    'http://localhost:5173',
+    'http://127.0.0.1:5500/',
+    'https://crm.a-techsolutionz.com',
+];
 
-    app.use((req, res, next) => {
-        const userAgent = req.headers['user-agent'] || '';
-        if (!req.headers.origin && userAgent.includes("Twilio")) {
-            return next();
+app.use((req, res, next) => {
+    const userAgent = req.headers['user-agent'] || '';
+    if (!req.headers.origin && userAgent.includes("Twilio")) {
+        return next();
+    }
+    next();
+});
+
+// app.use(cors());
+app.use(cors({
+    origin: function (origin, callback) {
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        } else {
+            return callback(new Error('Not allowed by CORS'));
         }
-        next();
-    });
+    },
+    credentials: true
+}));
 
-    // app.use(cors());
-    app.use(cors({
-        origin: function (origin, callback) {
-            if (!origin) return callback(null, true);
-            if (allowedOrigins.includes(origin)) {
-                return callback(null, true);
-            } else {
-                return callback(new Error('Not allowed by CORS'));
-            }
-        },
-        credentials: true
-    }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(bodyParser.json());

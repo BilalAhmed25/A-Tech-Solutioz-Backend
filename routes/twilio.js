@@ -10,46 +10,19 @@ const AccessToken = Twilio.jwt.AccessToken;
 
 const { BASE_URL_FOR_TWILIO_CALLBACKS, TWILIO_NUMBER } = process.env;
 
-/* ---------------- helpers ---------------- */
-
-function normalizePhone(p) {
-    if (p === null || p === undefined) return "";
-    return String(p).replace(/\D/g, "");
-}
-
-/**
- * insertCallLog - idempotent by CallSID when provided.
- * Stores Phone, CallSID, Status, DialedBy, Duration, RecordingUrl, createdAt.
- */
 const insertCallLog = async (phone = "", status = "", dialedBy = "", callSid = null, duration = null, recordingUrl = null) => {
     try {
-        const normalized = normalizePhone(phone);
-
-        // If CallSID provided, ensure idempotency by CallSID
-        if (callSid) {
-            const [existing] = await con.query(`SELECT ID FROM CallLogs WHERE CallSID = ? LIMIT 1`, [callSid]);
-            if (existing && existing.length > 0) {
-                // Update metadata (duration / recordingUrl / status / dialedBy) if more info arrives later
-                await con.query(
-                    `UPDATE CallLogs SET Status = ?, DialedBy = ?, Duration = ?, RecordingUrl = ? WHERE CallSID = ?`,
-                    [status || "", dialedBy || "", duration != null ? Number(duration) : null, recordingUrl || null, callSid]
-                );
-                return;
-            }
-        }
-
-        // No CallSID or no existing entry — create a new CallLog record
         await con.query(
             `INSERT INTO CallLogs (Phone, CallSID, Status, DialedBy, Duration, RecordingUrl) VALUES (?, ?, ?, ?, ?, ?)`,
-            [normalized || "", callSid || '', status || "", dialedBy || "", duration != null ? Number(duration) : '', recordingUrl || '']
+            [phone || "", callSid || '', status || "", dialedBy || "", duration != null ? Number(duration) : '', recordingUrl || '']
         );
     } catch (err) {
-        console.error("insertCallLog error:", err);
+        console.error("An error occurred while inserting call log:", err);
     }
 };
 
 router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, res) => {
-    const { To } = req.body;
+    const { To, agentId } = req.body;
     const response = new VoiceResponse();
 
     if (!To) {
@@ -59,8 +32,8 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
 
     const dial = response.dial({
         callerId: TWILIO_NUMBER,
-        answerOnBridge: true,
-        statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/call-status`,
+        // answerOnBridge: true,
+        statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/call-status?dialedBy=${agentId || 'System'}`,
         statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'failed', 'busy', 'no-answer', 'canceled'],
         statusCallbackMethod: 'POST'
     });
@@ -74,51 +47,61 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
    - Update DialingData but ONLY Status (no other columns)
 ------------------------------------------------------------------ */
 router.post("/call-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
-    const {
-        CallSid,         // Twilio uses CallSid (case variations exist)
-        CallSID,         // handle both
-        CallStatus,
-        To,
-        From,
-        CallDuration,
-        RecordingUrl
-    } = req.body;
-
+    const { CallSid, CallSID, CallStatus, To, From, CallDuration, RecordingUrl, Direction } = req.body;
+    const dialedByFromUrl = req.query.dialedBy;
     const callSid = CallSid || CallSID || null;
     const status = String(CallStatus || "").toLowerCase();
-    const phoneRaw = To || From || "";
-    const phoneNormalized = normalizePhone(phoneRaw);
 
     try {
-        // 1) Insert/update CallLogs (CallSID, status, duration, recordingUrl) — idempotent by CallSID
-        await insertCallLog(phoneNormalized, status, "Twilio", callSid, CallDuration ? Number(CallDuration) : null, RecordingUrl || null);
-
-        // 2) Update DialingData -> only Status column
-        // Find matching lead by CallSID first, fallback to last matching phone
-        let lead = null;
-        if (callSid) {
-            const [r] = await con.query(`SELECT LeadID FROM DialingData WHERE CallSID = ? LIMIT 1`, [callSid]);
-            if (r && r.length) lead = r[0];
-        }
-
-        if (!lead && phoneNormalized) {
-            const [r2] = await con.query(
-                `SELECT LeadID FROM DialingData WHERE REPLACE(REPLACE(REPLACE(Phone, ' ', ''), '-', ''), '+', '') LIKE ? ORDER BY LeadID DESC LIMIT 1`,
-                [`%${phoneNormalized}%`]
-            );
-            if (r2 && r2.length) lead = r2[0];
-        }
-
-        if (lead && typeof status === "string") {
-            // IMPORTANT: Only update the Status column — nothing else on DialingData.
-            await con.query(`UPDATE DialingData SET Status = ? WHERE LeadID = ?`, [status, lead.LeadID]);
+        if (Direction === 'outbound-dial') {
+            await insertCallLog(To, status, dialedByFromUrl, callSid, CallDuration ? Number(CallDuration) : null, RecordingUrl || null);
         }
     } catch (err) {
         console.error("Error in call-status webhook:", err);
     }
-
     // Reply quickly to Twilio
     res.sendStatus(200);
+});
+
+/* ---------------- Fetch Twilio Call Logs ----------------
+   GET /twilio-call-logs?limit=20&from=+15632588523&to=+1234567890&status=completed
+--------------------------------------------------------- */
+router.get("/twilio-call-logs", async (req, res) => {
+    try {
+        const TwilioClient = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+        const limit = Number(req.query.limit) || 20;
+        const from = req.query.from || undefined;
+        const to = req.query.to || undefined;
+        const status = req.query.status || undefined;
+
+        const filters = { limit };
+        if (from) filters.from = from;
+        if (to) filters.to = to;
+        if (status) filters.status = status;
+
+        const calls = await TwilioClient.calls.list(filters);
+
+        // Map to simpler JSON format
+        const callLogs = calls.map(c => ({
+            sid: c.sid,
+            from: c.from,
+            to: c.to,
+            status: c.status,
+            startTime: c.startTime,
+            endTime: c.endTime,
+            duration: c.duration,
+            price: c.price,
+            direction: c.direction,
+            errorCode: c.errorCode,
+            errorMessage: c.errorMessage,
+            recordingSid: c.subresourceUris.recordings
+        }));
+
+        res.json({ success: true, data: callLogs });
+    } catch (err) {
+        res.status(500).json({ success: false, error: "Failed to fetch Twilio call logs" });
+    }
 });
 
 module.exports = router;

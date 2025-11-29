@@ -15,7 +15,7 @@ const express = require('express'),
     googleSheet = require('./routes/googleSheet'),
 
     { verifyToken } = require('./authMiddleware'),
-    
+
     app = express(),
     server = http.createServer(app)
     ;
@@ -25,6 +25,11 @@ const allowedOrigins = [
     'http://127.0.0.1:5500/',
     'https://crm.a-techsolutionz.com',
 ];
+
+const userAgent = req.headers['user-agent'] || '';
+if (!req.headers.origin && userAgent.includes("Twilio")) {
+    return next();
+}
 
 // app.use(cors());
 app.use(cors({

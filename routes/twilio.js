@@ -33,6 +33,12 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
     const dial = response.dial({
         callerId: TWILIO_NUMBER,
         // answerOnBridge: true,
+
+        // --- RECORDING ENABLED HERE ---
+        record: 'record-from-answer', // Start recording when the call is answered
+        recordingStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/recording-status`, // <-- New URL for recording updates
+        // -----------------------------
+
         statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/call-status?dialedBy=${agentId || 'System'}`,
         statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'failed', 'busy', 'no-answer', 'canceled'],
         statusCallbackMethod: 'POST'
@@ -40,6 +46,25 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
     dial.number(To);
 
     res.type("text/xml").send(response.toString());
+});
+
+router.post("/recording-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+    const { CallSid, RecordingUrl, RecordingSid, RecordingStatus } = req.body;
+    if (RecordingStatus === 'completed' && RecordingUrl) {
+        try {
+            await con.query(
+                `UPDATE CallLogs SET RecordingUrl = ?, RecordingSid = ? WHERE CallSID = ?`,
+                [RecordingUrl, RecordingSid, CallSid]
+            );
+            res.sendStatus(200);
+        } catch (err) {
+            res.sendStatus(500);
+            console.error("Error updating recording URL:", err);
+        }
+    }
+
+    // Always reply quickly to Twilio
+    res.sendStatus(200);
 });
 
 /* ---------------- Twilio status webhook ----------------

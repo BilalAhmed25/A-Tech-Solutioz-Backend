@@ -292,6 +292,7 @@ router.put('/update-profile', async function (req, res) {
         dateOfBirth,
         departmentId,
         designationId,
+        workingShift,
         residentialAddress,
         languages,
         country,

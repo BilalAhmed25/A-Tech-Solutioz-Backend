@@ -32,6 +32,88 @@ router.post('/update-employee-department', async function (req, res) {
     }
 })
 
+router.post('/upload-shift-record', async (req, res) => {
+    try {
+        const { empID, workingShift, startDate } = req.body;
+
+        if (!empID || !workingShift || !startDate) {
+            return res.status(400).json("All fields are required.");
+        }
+
+        // Fetch active shift (EndDate IS NULL)
+        const [existing] = await con.execute("SELECT * FROM UserShiftAssignments WHERE UserID = ? AND EndDate IS NULL LIMIT 1", [empID]);
+
+        if (existing.length > 0) {
+            const current = existing[0];
+
+            // CASE 1: Active record exists but ShiftID is NULL → update it
+            if (current.ShiftID === null) {
+                await con.execute("UPDATE UserShiftAssignments SET ShiftID = ? WHERE ID = ?", [workingShift, current.ID]);
+            } else {
+                // CASE 2: Active record exists and ShiftID is NOT NULL → close old & insert new
+                await con.execute("UPDATE UserShiftAssignments SET EndDate = ? WHERE ID = ?", [startDate, current.ID]);
+                await con.execute("INSERT INTO UserShiftAssignments (UserID, ShiftID, StartDate) VALUES (?, ?, ?)", [empID, workingShift, startDate]);
+            }
+        } else {
+            // CASE 3: No active shift exists → insert new
+            await con.execute("INSERT INTO UserShiftAssignments (UserID, ShiftID, StartDate) VALUES (?, ?, ?)", [empID, workingShift, startDate]);
+        }
+
+        res.json("Successfully uploaded shift record.");
+    } catch (error) {
+        console.error(error);
+        res.status(500).json("Internal server error. Please try again later.");
+    }
+});
+
+router.post('/upload-shift-record-old', async (req, res) => {
+    try {
+        const { empID, workingShift, startDate } = req.body;
+
+        if (!empID || !workingShift || !startDate) {
+            return res.status(400).json("All fields are required.");
+        }
+
+        // Check for existing active shift (with EndDate IS NULL)
+        const [existing] = await con.execute('SELECT * FROM UserShiftAssignments WHERE UserID = ? AND EndDate IS NULL LIMIT 1', [empID]);
+
+        if (existing.length > 0) {
+            const current = existing[0];
+
+            // Case 1: same StartDate exists → just update ShiftID
+            if (current.StartDate.toISOString().split('T')[0] === startDate) {
+                await con.execute(
+                    'UPDATE UserShiftAssignments SET ShiftID = ? WHERE ID = ?',
+                    [workingShift, current.ID]
+                );
+            } else {
+                // Case 2: StartDate is different → end old record and insert new one
+                await con.execute(
+                    'UPDATE UserShiftAssignments SET EndDate = ? WHERE ID = ?',
+                    [startDate, current.ID]
+                );
+
+                await con.execute(
+                    'INSERT INTO UserShiftAssignments (UserID, ShiftID, StartDate) VALUES (?, ?, ?)',
+                    [empID, workingShift, startDate]
+                );
+            }
+
+        } else {
+            // Case 3: No current active shift → insert new record
+            await con.execute(
+                'INSERT INTO UserShiftAssignments (UserID, ShiftID, StartDate) VALUES (?, ?, ?)',
+                [empID, workingShift, startDate]
+            );
+        }
+
+        res.json('Successfully uploaded shift record.');
+    } catch (error) {
+        console.error(error);
+        res.status(500).json("Internal server error. Please try again later.");
+    }
+});
+
 router.get('/get-designations', async function (req, res) {
     try {
         const [result] = await con.execute("SELECT * FROM `Designations` WHERE `Department` != 5");
@@ -150,6 +232,5 @@ router.post("/upload-attendance", upload.single("file"), async (req, res) => {
         return res.status(500).json({ error: "Upload failed" });
     }
 });
-
 
 module.exports = router;

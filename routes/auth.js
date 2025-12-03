@@ -31,6 +31,85 @@ router.post('/login', async function (req, res) {
 })
 
 router.post('/sign-up', async function (req, res) {
+    const { name, email, phone, password, departmentId, designationId, workingShift, residentialAddress, languages, accountType, status } = req.body;
+    const connection = await con.getConnection();
+
+    try {
+        await connection.beginTransaction();
+
+        // Check if user already exists
+        const checkUserQuery = "SELECT * FROM UserDetails WHERE Email = ?";
+        const [existingUsers] = await connection.execute(checkUserQuery, [email]);
+
+        if (existingUsers.length > 0) {
+            await connection.rollback();
+            return res.status(409).json("User with this email already exists.");
+        }
+
+        // Insert into UserDetails
+        const insertUserQuery = `
+            INSERT INTO UserDetails 
+            (Name, Email, Phone, Password, DepartmentID, DesignationID, ResidentialAddress, Languages, AccountType, Status) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+
+        const [userResult] = await connection.execute(insertUserQuery, [
+            name, email, phone, password, departmentId, designationId, residentialAddress, languages, accountType, status
+        ]);
+
+        const userId = userResult.insertId;
+
+        // Insert into UserShiftAssignments
+        const insertShiftQuery = ` INSERT INTO UserShiftAssignments (UserID, ShiftID, StartDate)  VALUES (?, ?, ?);`;
+
+        await connection.execute(insertShiftQuery, [userId, workingShift || null, new Date()]);
+
+        // Commit both operations
+        await connection.commit();
+
+        // ---- Send Email ----
+        const templatePath = path.join(__dirname, '../email-templates/welcome-onboard.html');
+        let htmlTemplate = fs.readFileSync(templatePath, 'utf-8');
+
+        htmlTemplate = htmlTemplate.replace('{{fullName}}', name);
+        htmlTemplate = htmlTemplate.replace('{{email}}', email);
+        htmlTemplate = htmlTemplate.replace('{{password}}', password);
+
+        await sendEmail(
+            `"Human Resource Department" <${process.env.SMTP_USER}>`,
+            email,
+            'Thank you for being a part of A Tech Solutionz',
+            htmlTemplate,
+            [
+                {
+                    filename: 'logo-white.png',
+                    path: path.join(__dirname, '../email-templates/images/logo-white.png'),
+                    cid: 'logo'
+                }
+            ],
+            {
+                host: process.env.SMTP_HOST,
+                port: parseInt(process.env.SMTP_PORT),
+                secure: true,
+                auth: {
+                    user: process.env.SMTP_USER,
+                    pass: process.env.SMTP_PASS,
+                },
+            }
+        );
+
+        res.status(201).json("User registered successfully.");
+
+    } catch (error) {
+        console.error("Signup error:", error);
+        await connection.rollback();
+        res.status(500).json("Internal server error. Please try again later.");
+    } finally {
+        connection.release();
+    }
+});
+
+router.post('/sign-up-old', async function (req, res) {
     const { name, email, phone, password, departmentId, designationId, residentialAddress, languages, accountType, status } = req.body;
     try {
         const checkUserQuery = "SELECT * FROM UserDetails WHERE Email = ?";

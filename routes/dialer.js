@@ -79,6 +79,64 @@ router.get("/token", (req, res) => {
 ------------------------------------------------------------------ */
 router.get("/next", async (req, res) => {
     try {
+        const getNextLead = async () => {
+            const [rows] = await con.query(
+                `SELECT LeadID, Phone, Name, LeadType, Budget, Comments, DialedBy, Status
+                 FROM DialingData
+                 WHERE (Status IS NULL OR Status = '')
+                 ORDER BY LeadID ASC LIMIT 1`
+            );
+
+            if (!rows || rows.length === 0) return null;
+            return rows[0];
+        };
+
+        let row = await getNextLead();
+
+        // If nothing found
+        if (!row) {
+            return res.json({
+                success: true,
+                number: null,
+                message: "List finished."
+            });
+        }
+
+        // Loop until a valid number is found
+        while (row) {
+            const rawPhone = row.Phone || "";
+
+            // Validate US Phone (digits only, 10 digits)
+            const cleaned = rawPhone.replace(/\D/g, "");
+            const isValidUS = cleaned.length === 10;  // Simple validation
+
+            if (!isValidUS) {
+                // Mark invalid
+                await con.query(`UPDATE DialingData SET Status = 'Invalid Number' WHERE LeadID = ?`, [row.LeadID]);
+                // Check next row
+                row = await getNextLead();
+                continue;
+            }
+
+            // Valid number found
+            return res.json({ success: true, number: cleaned, details: row });
+        }
+
+        // If loop ends and no valid number found
+        return res.json({
+            success: true,
+            number: null,
+            message: "No valid number available."
+        });
+
+    } catch (err) {
+        console.error("GET /next error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.get("/next-old", async (req, res) => {
+    try {
         const [rows] = await con.query(
             `SELECT LeadID, Phone, Name, LeadType, Budget, Comments, DialedBy, Status
              FROM DialingData
@@ -87,7 +145,6 @@ router.get("/next", async (req, res) => {
         );
 
         if (!rows || rows.length === 0) return res.json({ success: true, number: null, message: "List finished." });
-
         const row = rows[0];
         return res.json({ success: true, number: normalizePhone(row.Phone || ""), details: row });
     } catch (err) {
@@ -170,12 +227,12 @@ router.post("/end", bodyParser.json(), async (req, res) => {
 
         // 1) Update DialingData -> ONLY Status
         if (leadID) {
-            await con.query(`UPDATE DialingData SET Status = ? WHERE LeadID = ?`, [disposition, leadID]);
+            await con.query(`UPDATE DialingData SET Status = ?, DialedBy = ? WHERE LeadID = ?`, [disposition, empID, leadID]);
         } else if (phoneForLog) {
             // fallback: update by phone (best-effort)
             await con.query(
-                `UPDATE DialingData SET Status = ? WHERE REPLACE(REPLACE(REPLACE(Phone, ' ', ''), '-', ''), '+', '') LIKE ? ORDER BY LeadID DESC LIMIT 1`,
-                [disposition, `%${phoneForLog}%`]
+                `UPDATE DialingData SET Status = ?, DialedBy = ? WHERE REPLACE(REPLACE(REPLACE(Phone, ' ', ''), '-', ''), '+', '') LIKE ? ORDER BY LeadID DESC LIMIT 1`,
+                [disposition, empID, `%${phoneForLog}%`]
             );
         }
 

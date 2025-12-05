@@ -43,9 +43,11 @@
     "nodemailer-smtp-transport": "^2.4.2",
     "path": "^0.12.7",
     "pdfkit": "^0.17.1",
+    "socket.io": "^4.8.1",
     "square": "^43.2.0",
     "stripe": "^18.1.1",
-    "twilio": "^5.10.6",
+    "twilio": "^5.10.7",
+    "ws": "^8.18.3",
     "xlsx": "^0.18.5"
   }
 }

@@ -30,15 +30,63 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
         return res.type("text/xml").send(response.toString());
     }
 
+    // Real-time transcription
+    const start = response.start();
+    start.transcription({
+        engine: 'google', // Twilio's transcription engine
+        track: 'both_tracks',
+        language: 'en-US',
+        interimResults: true,
+        statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/transcription-callback`
+    });
+
+    // Dial and record
+    const dial = response.dial({
+        callerId: TWILIO_NUMBER,
+        record: 'record-from-answer',
+        recordingStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/recording-status`,
+        statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/call-status?dialedBy=${agentId || 'System'}`,
+        statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'failed', 'busy', 'no-answer', 'canceled'],
+        statusCallbackMethod: 'POST'
+    });
+    dial.number(To);
+
+    res.type("text/xml").send(response.toString());
+});
+
+// ----------------- Transcription Callback -----------------
+router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }), (req, res) => {
+    const event = req.body.TranscriptionEvent;
+    const transcriptData = req.body.TranscriptionData
+        ? JSON.parse(req.body.TranscriptionData)
+        : null;
+
+    if (event === "transcription-content" && transcriptData) {
+        global.io.emit("transcript", {
+            track: req.body.Track || 'inbound',
+            transcript: transcriptData.transcript,
+            final: req.body.Final === "true"
+        });
+    }
+
+    res.sendStatus(200);
+});
+
+router.post("/voice-handler-old", bodyParser.urlencoded({ extended: false }), (req, res) => {
+    const { To, agentId } = req.body;
+    const response = new VoiceResponse();
+
+    if (!To) {
+        response.say("Invalid number provided.");
+        return res.type("text/xml").send(response.toString());
+    }
+
+    // Recording + status
     const dial = response.dial({
         callerId: TWILIO_NUMBER,
         // answerOnBridge: true,
-
-        // --- RECORDING ENABLED HERE ---
-        record: 'record-from-answer', // Start recording when the call is answered
-        recordingStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/recording-status`, // <-- New URL for recording updates
-        // -----------------------------
-
+        record: 'record-from-answer',
+        recordingStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/recording-status`,
         statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/call-status?dialedBy=${agentId || 'System'}`,
         statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'failed', 'busy', 'no-answer', 'canceled'],
         statusCallbackMethod: 'POST'
@@ -62,9 +110,6 @@ router.post("/recording-status", bodyParser.urlencoded({ extended: false }), asy
             console.error("Error updating recording URL:", err);
         }
     }
-
-    // Always reply quickly to Twilio
-    res.sendStatus(200);
 });
 
 /* ---------------- Twilio status webhook ----------------
@@ -87,6 +132,8 @@ router.post("/call-status", bodyParser.urlencoded({ extended: false }), async (r
     // Reply quickly to Twilio
     res.sendStatus(200);
 });
+
+
 
 /* ---------------- Fetch Twilio Call Logs ----------------
    GET /twilio-call-logs?limit=20&from=+15632588523&to=+1234567890&status=completed

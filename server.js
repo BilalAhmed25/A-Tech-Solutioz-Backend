@@ -13,12 +13,11 @@ const express = require('express'),
     invoice = require('./routes/invoice'),
     auth = require('./routes/auth'),
     googleSheet = require('./routes/googleSheet'),
-
     { verifyToken } = require('./authMiddleware'),
+    { WebSocketServer } = require('ws'),
 
     app = express(),
-    server = http.createServer(app)
-    ;
+    server = http.createServer(app);
 
 const allowedOrigins = [
     'http://localhost:5173',
@@ -34,7 +33,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// app.use(cors());
 app.use(cors({
     origin: function (origin, callback) {
         if (!origin) return callback(null, true);
@@ -63,9 +61,28 @@ app.use('/invoice', invoice);
 app.use('/general', general);
 app.use('/google', googleSheet);
 
+// 🔥 SOCKET.IO SETUP
+const io = require("socket.io")(server, {
+    cors: {
+        origin: allowedOrigins,
+        methods: ["GET", "POST"],
+        credentials: true
+    }
+});
+
+global.io = io;
+
+io.on("connection", (socket) => {
+    console.log("✅ Socket connected:", socket.id);
+    socket.on("disconnect", (reason) => {
+        console.log("❌ Socket disconnected:", reason);
+    });
+});
+
 app.get('*', function (req, res) {
-    // console.log('This is requested URL: ' + req.url);
     res.status(404).json('API not found.');
 });
 
-server.listen(300 || process.env.PORT, () => { });
+server.listen(300 || process.env.PORT, () => {
+    console.log("Server running...");
+});

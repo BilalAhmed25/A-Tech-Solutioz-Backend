@@ -33,11 +33,12 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
     // Real-time transcription
     const start = response.start();
     start.transcription({
-        engine: 'google', // Twilio's transcription engine
+        statusCallbackUrl: `${BASE_URL_FOR_TWILIO_CALLBACKS}/transcription-callback`,
+        transcriptionEngine: 'google',
         track: 'both_tracks',
-        language: 'en-US',
-        interimResults: true,
-        statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/transcription-callback`
+        languageCode: 'en-US',
+        partialResults: true,
+        enableAutomaticPunctuation: true,
     });
 
     // Dial and record

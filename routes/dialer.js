@@ -17,7 +17,7 @@ function normalizePhone(p) {
 const insertCallLog = async (phone, dialedBy, callSid) => {
     try {
         const normalized = normalizePhone(phone);
-        await con.query(`INSERT INTO CallLogs (Phone, CallSID,DialedBy) VALUES (?, ?, ?)`, [normalized, callSid, dialedBy]);
+        await con.query(`INSERT INTO CallLogs (Phone, CallSID, DialedBy) VALUES (?, ?, ?)`, [normalized, callSid, dialedBy]);
     } catch (err) {
         console.error("Error:", err);
     }

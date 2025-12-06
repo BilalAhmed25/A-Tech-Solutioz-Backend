@@ -29,46 +29,50 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
         return res.type("text/xml").send(response.toString());
     }
 
-    // Real-time transcription
-    const start = response.start();
-    start.transcription({
-        statusCallbackUrl: `${BASE_URL_FOR_TWILIO_CALLBACKS}/transcription-callback`,
-        transcriptionEngine: 'google',
-        track: 'both_tracks',
-        languageCode: 'en-US',
-        partialResults: true,
-        enableAutomaticPunctuation: true,
-    });
+    try {
+        // Real-time transcription
+        const start = response.start();
+        start.transcription({
+            statusCallbackUrl: `${BASE_URL_FOR_TWILIO_CALLBACKS}/transcription-callback`,
+            transcriptionEngine: 'google',
+            track: 'both_tracks',
+            languageCode: 'en-US',
+            partialResults: true,
+            enableAutomaticPunctuation: true,
+        });
 
-    const dial = response.dial({
-        callerId: TWILIO_NUMBER,
-        record: 'record-from-answer',
-        recordingStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/recording-status`,
-        // answerOnBridge: true,
+        const dial = response.dial({
+            callerId: TWILIO_NUMBER,
+            record: 'record-from-answer',
+            recordingStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/recording-status`,
+            // answerOnBridge: true,
 
-        asyncAmd: true,
-        asyncAmdStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/amd-status?dialedBy=${agentId}`,
-        asyncAmdStatusCallbackMethod: "POST",
+            asyncAmd: true,
+            asyncAmdStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/amd-status?dialedBy=${agentId}`,
+            asyncAmdStatusCallbackMethod: "POST",
 
-        // statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/call-status?dialedBy=${agentId}`,
-        // statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'failed', 'busy', 'no-answer', 'canceled'],
-        // statusCallbackMethod: 'POST'
-    });
-
-    dial.number(To);
-
-    res.type("text/xml").send(response.toString());
+            // statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/call-status?dialedBy=${agentId}`,
+            // statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'failed', 'busy', 'no-answer', 'canceled'],
+            // statusCallbackMethod: 'POST'
+        });
+        dial.number(To);
+        res.type("text/xml").send(response.toString());
+    } catch (error) {
+        console.error(error);
+        const failResponse = new VoiceResponse();
+        failResponse.say("We are unable to process your call right now. Please try again.");
+        return res.status(200).type("text/xml").send(failResponse.toString());
+    }
 });
 
 router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
-    const { CallSid, To, AnsweredBy } = req.body; // AnsweredBy: human, machine_start, machine_end_beep
-    const dialedBy = req.query.dialedBy || "System";
+    const { CallSid, AnsweredBy } = req.body; // AnsweredBy: human, machine_start, machine_end_beep
 
     // Update DialingData if not human
     try {
         let newStatus = AnsweredBy !== "human" ? AnsweredBy : "Answered";
         await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID =? AND DialedBy = ?`, [newStatus, CallSid]);
-        // await insertCallLog(To, AnsweredBy, dialedBy, CallSid);
+        await con.query(`UPDATE CallLogs SET Status = ? WHERE CallSID = ?`, [newStatus, CallSid]);
     } catch (err) {
         console.error("Failed to update DialingData for AMD:", err);
     }

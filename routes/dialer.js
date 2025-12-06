@@ -78,6 +78,7 @@ router.get("/token", (req, res) => {
    Return normalized phone and full details in 'details'
 ------------------------------------------------------------------ */
 router.get("/next", async (req, res) => {
+    const { ID } = req.user;
     try {
         const getNextLead = async () => {
             const [rows] = await con.query(
@@ -116,6 +117,8 @@ router.get("/next", async (req, res) => {
                 // Check next row
                 row = await getNextLead();
                 continue;
+            } else {
+                await con.query(`UPDATE DialingData SET Status = 'Dialing', DialedBy = ? WHERE LeadID = ?`, [ID, row.LeadID]);
             }
 
             // Valid number found
@@ -129,24 +132,6 @@ router.get("/next", async (req, res) => {
             message: "No valid number available."
         });
 
-    } catch (err) {
-        console.error("GET /next error:", err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-router.get("/next-old", async (req, res) => {
-    try {
-        const [rows] = await con.query(
-            `SELECT LeadID, Phone, Name, LeadType, Budget, Comments, DialedBy, Status
-             FROM DialingData
-             WHERE (Status IS NULL OR Status = '')
-             ORDER BY LeadID ASC LIMIT 1`
-        );
-
-        if (!rows || rows.length === 0) return res.json({ success: true, number: null, message: "List finished." });
-        const row = rows[0];
-        return res.json({ success: true, number: normalizePhone(row.Phone || ""), details: row });
     } catch (err) {
         console.error("GET /next error:", err);
         res.status(500).json({ error: err.message });

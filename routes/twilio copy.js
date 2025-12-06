@@ -6,8 +6,9 @@ const { con } = require("../database");
 
 const router = express.Router();
 const VoiceResponse = Twilio.twiml.VoiceResponse;
+const AccessToken = Twilio.jwt.AccessToken;
 
-const { BASE_URL_FOR_TWILIO_CALLBACKS, TWILIO_NUMBER, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN } = process.env;
+const { BASE_URL_FOR_TWILIO_CALLBACKS, TWILIO_NUMBER } = process.env;
 
 const insertCallLog = async (phone = "", status = "", dialedBy = "", callSid = null, duration = null, recordingUrl = null) => {
     try {
@@ -39,35 +40,21 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
         statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/transcription-callback`
     });
 
+    // Dial and record
     const dial = response.dial({
         callerId: TWILIO_NUMBER,
         record: 'record-from-answer',
         recordingStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/recording-status`,
-        answerOnBridge: true,
-
-        // AI Built-In Detection
-        machineDetection: "Enable",
-        machineDetectionTimeout: 10,
-        machineDetectionSpeechThreshold: 240,
-        machineDetectionSpeechEndThreshold: 120,
-
-        // Twilio will POST here when AMD decides human/machine
-        amdStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/amd-status?dialedBy=${agentId}`,
-        amdStatusCallbackMethod: "POST",
-
-        statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/call-status?dialedBy=${agentId}`,
-        statusCallbackEvent: [
-            'initiated', 'ringing', 'answered', 'completed',
-            'failed', 'busy', 'no-answer', 'canceled'
-        ],
+        statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/call-status?dialedBy=${agentId || 'System'}`,
+        statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'failed', 'busy', 'no-answer', 'canceled'],
         statusCallbackMethod: 'POST'
     });
-
     dial.number(To);
 
     res.type("text/xml").send(response.toString());
 });
 
+// ----------------- Transcription Callback -----------------
 router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }), (req, res) => {
     const event = req.body.TranscriptionEvent;
     const transcriptData = req.body.TranscriptionData
@@ -83,6 +70,30 @@ router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }
     }
 
     res.sendStatus(200);
+});
+
+router.post("/voice-handler-old", bodyParser.urlencoded({ extended: false }), (req, res) => {
+    const { To, agentId } = req.body;
+    const response = new VoiceResponse();
+
+    if (!To) {
+        response.say("Invalid number provided.");
+        return res.type("text/xml").send(response.toString());
+    }
+
+    // Recording + status
+    const dial = response.dial({
+        callerId: TWILIO_NUMBER,
+        // answerOnBridge: true,
+        record: 'record-from-answer',
+        recordingStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/recording-status`,
+        statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/call-status?dialedBy=${agentId || 'System'}`,
+        statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'failed', 'busy', 'no-answer', 'canceled'],
+        statusCallbackMethod: 'POST'
+    });
+    dial.number(To);
+
+    res.type("text/xml").send(response.toString());
 });
 
 router.post("/recording-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
@@ -101,6 +112,10 @@ router.post("/recording-status", bodyParser.urlencoded({ extended: false }), asy
     }
 });
 
+/* ---------------- Twilio status webhook ----------------
+   - Always insert/update CallLogs with CallSID, RecordingUrl, Duration, Status
+   - Update DialingData but ONLY Status (no other columns)
+------------------------------------------------------------------ */
 router.post("/call-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
     const { CallSid, CallSID, CallStatus, To, From, CallDuration, RecordingUrl, Direction } = req.body;
     const dialedByFromUrl = req.query.dialedBy;
@@ -118,47 +133,47 @@ router.post("/call-status", bodyParser.urlencoded({ extended: false }), async (r
     res.sendStatus(200);
 });
 
-router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
-    const { CallSid, To, AnsweredBy } = req.body;  // AnsweredBy = human, machine_start, machine_end_beep
-    const dialedBy = req.query.dialedBy || "System";
 
-    // Insert AI-detected status into DB
-    await insertCallLog(To, AnsweredBy, dialedBy, CallSid, null, null);
 
+/* ---------------- Fetch Twilio Call Logs ----------------
+   GET /twilio-call-logs?limit=20&from=+15632588523&to=+1234567890&status=completed
+--------------------------------------------------------- */
+router.get("/twilio-call-logs", async (req, res) => {
     try {
-        let newStatus = AnsweredBy !== "human" ? AnsweredBy : "Answered";
-        await con.query(
-            `UPDATE DialingData SET Status = ? WHERE REPLACE(REPLACE(REPLACE(Phone, ' ', ''), '-', ''), '+', '') LIKE ? AND DialedBy = ?`,
-            [newStatus, `%${To.replace(/\D/g, "")}%`, dialedBy]
-        );
+        const TwilioClient = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+        const limit = Number(req.query.limit) || 20;
+        const from = req.query.from || undefined;
+        const to = req.query.to || undefined;
+        const status = req.query.status || undefined;
+
+        const filters = { limit };
+        if (from) filters.from = from;
+        if (to) filters.to = to;
+        if (status) filters.status = status;
+
+        const calls = await TwilioClient.calls.list(filters);
+
+        // Map to simpler JSON format
+        const callLogs = calls.map(c => ({
+            sid: c.sid,
+            from: c.from,
+            to: c.to,
+            status: c.status,
+            startTime: c.startTime,
+            endTime: c.endTime,
+            duration: c.duration,
+            price: c.price,
+            direction: c.direction,
+            errorCode: c.errorCode,
+            errorMessage: c.errorMessage,
+            recordingSid: c.subresourceUris.recordings
+        }));
+
+        res.json({ success: true, data: callLogs });
     } catch (err) {
-        console.error("Failed to update DialingData for auto-ended call:", err);
+        res.status(500).json({ success: false, error: "Failed to fetch Twilio call logs" });
     }
-
-    // Machine → auto hangup the call
-    if (AnsweredBy !== "human") {
-        const twilio = require("twilio")(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-        await twilio.calls(CallSid).update({ status: "completed" });
-        return res.sendStatus(200);
-    }
-
-    // Human → allow call to continue
-    return res.sendStatus(200);
-});
-
-router.post("/ai-summary-callback", bodyParser.urlencoded({ extended: false }), async (req, res) => {
-    const { CallSid, AnalysisSummary, Sentiment } = req.body;
-
-    try {
-        await con.query(
-            `UPDATE CallLogs SET AISummary = ?, AISentiment = ? WHERE CallSID = ?`,
-            [AnalysisSummary || "", Sentiment || "", CallSid]
-        );
-    } catch (err) {
-        console.error("Error saving AI summary:", err);
-    }
-
-    res.sendStatus(200);
 });
 
 module.exports = router;

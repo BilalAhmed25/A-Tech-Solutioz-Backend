@@ -7,7 +7,7 @@ const { con } = require("../database");
 const router = express.Router();
 const VoiceResponse = Twilio.twiml.VoiceResponse;
 
-const { BASE_URL_FOR_TWILIO_CALLBACKS, TWILIO_NUMBER, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN } = process.env;
+const { BASE_URL_FOR_TWILIO_CALLBACKS, TWILIO_NUMBER } = process.env;
 
 const insertCallLog = async (phone = "", status = "", dialedBy = "", callSid = null, duration = null, recordingUrl = null) => {
     try {
@@ -46,15 +46,8 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
             record: 'record-from-answer',
             recordingStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/recording-status`,
             // answerOnBridge: true,
-
-            asyncAmd: true,
-            asyncAmdStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/amd-status?dialedBy=${agentId}`,
-            asyncAmdStatusCallbackMethod: "POST",
-
-            // statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/call-status?dialedBy=${agentId}`,
-            // statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'failed', 'busy', 'no-answer', 'canceled'],
-            // statusCallbackMethod: 'POST'
         });
+
         dial.number(To);
         res.type("text/xml").send(response.toString());
     } catch (error) {
@@ -66,27 +59,18 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
 });
 
 router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
-    const { CallSid, AnsweredBy } = req.body; // AnsweredBy: human, machine_start, machine_end_beep
-
-    // Update DialingData if not human
+    const { CallSid, AnsweredBy } = req.body;
     try {
-        let newStatus = AnsweredBy !== "human" ? AnsweredBy : "Answered";
-        await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID =? AND DialedBy = ?`, [newStatus, CallSid]);
-        await con.query(`UPDATE CallLogs SET Status = ? WHERE CallSID = ?`, [newStatus, CallSid]);
-    } catch (err) {
-        console.error("Failed to update DialingData for AMD:", err);
-    }
-
-    // Auto hang up machines
-    if (AnsweredBy !== "human") {
-        try {
+        const status = AnsweredBy !== "human" ? AnsweredBy : "Human";
+        if (AnsweredBy !== "human") {
+            await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?`, [status, CallSid]);
+            await con.query(`UPDATE CallLogs SET Status = ? WHERE CallSID = ?`, [status, CallSid]);
             await twilioClient.calls(CallSid).update({ status: "completed" });
-        } catch (e) {
-            console.error("Failed to auto-complete machine call:", e);
         }
+    } catch (err) {
+        console.error("AMD DB Update Error:", err);
     }
-
-    res.sendStatus(200);
+    res.status(200).send("OK");
 });
 
 router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }), (req, res) => {

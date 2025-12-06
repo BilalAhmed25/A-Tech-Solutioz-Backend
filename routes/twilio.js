@@ -46,27 +46,43 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
         recordingStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/recording-status`,
         // answerOnBridge: true,
 
-        // AI Built-In Detection
-        machineDetection: "Enable",
-        machineDetectionTimeout: 10,
-        machineDetectionSpeechThreshold: 240,
-        machineDetectionSpeechEndThreshold: 120,
+        asyncAmd: true,
+        asyncAmdStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/amd-status?dialedBy=${agentId}`,
+        asyncAmdStatusCallbackMethod: "POST",
 
-        // Twilio will POST here when AMD decides human/machine
-        amdStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/amd-status?dialedBy=${agentId}`,
-        amdStatusCallbackMethod: "POST",
-
-        statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/call-status?dialedBy=${agentId}`,
-        statusCallbackEvent: [
-            'initiated', 'ringing', 'answered', 'completed',
-            'failed', 'busy', 'no-answer', 'canceled'
-        ],
-        statusCallbackMethod: 'POST'
+        // statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/call-status?dialedBy=${agentId}`,
+        // statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'failed', 'busy', 'no-answer', 'canceled'],
+        // statusCallbackMethod: 'POST'
     });
 
     dial.number(To);
 
     res.type("text/xml").send(response.toString());
+});
+
+router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+    const { CallSid, To, AnsweredBy } = req.body; // AnsweredBy: human, machine_start, machine_end_beep
+    const dialedBy = req.query.dialedBy || "System";
+
+    // Update DialingData if not human
+    try {
+        let newStatus = AnsweredBy !== "human" ? AnsweredBy : "Answered";
+        await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID =? AND DialedBy = ?`, [newStatus, CallSid]);
+        // await insertCallLog(To, AnsweredBy, dialedBy, CallSid);
+    } catch (err) {
+        console.error("Failed to update DialingData for AMD:", err);
+    }
+
+    // Auto hang up machines
+    if (AnsweredBy !== "human") {
+        try {
+            await twilioClient.calls(CallSid).update({ status: "completed" });
+        } catch (e) {
+            console.error("Failed to auto-complete machine call:", e);
+        }
+    }
+
+    res.sendStatus(200);
 });
 
 router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }), (req, res) => {
@@ -113,52 +129,8 @@ router.post("/call-status", bodyParser.urlencoded({ extended: false }), async (r
             await insertCallLog(To, status, dialedByFromUrl, callSid, CallDuration ? Number(CallDuration) : null, RecordingUrl || null);
         }
     } catch (err) {
-        console.error("Error in call-status webhook:", err);
+        console.error("Error:", err);
     }
-    // Reply quickly to Twilio
-    res.sendStatus(200);
-});
-
-router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
-    const { CallSid, To, AnsweredBy } = req.body;  // AnsweredBy = human, machine_start, machine_end_beep
-    const dialedBy = req.query.dialedBy || "System";
-
-    // Insert AI-detected status into DB
-    await insertCallLog(To, AnsweredBy, dialedBy, CallSid, null, null);
-
-    try {
-        let newStatus = AnsweredBy !== "human" ? AnsweredBy : "Answered";
-        await con.query(
-            `UPDATE DialingData SET Status = ? WHERE REPLACE(REPLACE(REPLACE(Phone, ' ', ''), '-', ''), '+', '') LIKE ? AND DialedBy = ?`,
-            [newStatus, `%${To.replace(/\D/g, "")}%`, dialedBy]
-        );
-    } catch (err) {
-        console.error("Failed to update DialingData for auto-ended call:", err);
-    }
-
-    // Machine → auto hangup the call
-    if (AnsweredBy !== "human") {
-        const twilio = require("twilio")(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-        await twilio.calls(CallSid).update({ status: "completed" });
-        return res.sendStatus(200);
-    }
-
-    // Human → allow call to continue
-    return res.sendStatus(200);
-});
-
-router.post("/ai-summary-callback", bodyParser.urlencoded({ extended: false }), async (req, res) => {
-    const { CallSid, AnalysisSummary, Sentiment } = req.body;
-
-    try {
-        await con.query(
-            `UPDATE CallLogs SET AISummary = ?, AISentiment = ? WHERE CallSID = ?`,
-            [AnalysisSummary || "", Sentiment || "", CallSid]
-        );
-    } catch (err) {
-        console.error("Error saving AI summary:", err);
-    }
-
     res.sendStatus(200);
 });
 

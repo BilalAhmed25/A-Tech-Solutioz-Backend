@@ -108,8 +108,11 @@ router.post("/attach-callsid", bodyParser.json(), async (req, res) => {
 
 router.post("/end", bodyParser.json(), async (req, res) => {
     try {
-        const { callSid, disposition, duration } = req.body;
+        const { callSid, disposition, duration, callbackDateTime, callbackComments } = req.body;
         if (!disposition || !callSid) return res.status(400).json({ error: "disposition and callSid are required." });
+        if (disposition === 'Callback later') {
+            await con.query(`INSERT INTO Callbacks (UserID, CallSID, DateTime, Comments) VALUES ();`, [req.user.ID, callSid, callbackDateTime, callbackComments]);
+        }
         await upateCallLog(disposition, duration, callSid);
         return res.json({ success: true });
     } catch (err) {

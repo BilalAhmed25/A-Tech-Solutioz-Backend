@@ -7,7 +7,7 @@ const { con } = require("../database");
 const router = express.Router();
 const AccessToken = Twilio.jwt.AccessToken;
 const VoiceGrant = AccessToken.VoiceGrant;
-const { TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, TWILIO_APP_SID } = process.env;
+const { TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, TWILIO_APP_SID, TWILIO_AUTH_TOKEN } = process.env;
 
 function normalizePhone(p) {
     if (p === null || p === undefined) return "";
@@ -118,6 +118,25 @@ router.post("/end", bodyParser.json(), async (req, res) => {
     } catch (err) {
         console.error("POST /end error:", err);
         res.status(500).json({ error: err.message });
+    }
+});
+
+router.get("/recording", async (req, res) => {
+    const { url } = req.params;
+    try {
+        const response = await axios.get(url, {
+            responseType: "stream",
+            auth: {
+                username: TWILIO_ACCOUNT_SID,
+                password: TWILIO_AUTH_TOKEN,
+            },
+        });
+
+        res.setHeader("Content-Type", "audio/mpeg");
+        response.data.pipe(res);
+    } catch (error) {
+        console.error(error.message);
+        res.status(500).json({ error: "Failed to fetch recording" });
     }
 });
 

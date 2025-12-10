@@ -6,21 +6,60 @@ const router = express.Router();
 
 router.get("/logs", async (req, res) => {
     const { ID, DepartmentID } = req.user;
-    let query = "SELECT CallLogs.Phone, CallLogs.CallSID, CallLogs.RecordingSid, CallLogs.RecordingUrl, CallLogs.AISentiment, CallLogs.AISummary, CallLogs.Status, CallLogs.Duration, CallLogs.DialedOn, UserDetails.ID, UserDetails.Name, UserDetails.Email, UserDetails.ProfilePicture FROM `CallLogs` JOIN UserDetails ON CallLogs.DialedBy = UserDetails.ID";
+    const { type, selectedProfile, selectedFile, range } = req.query.filters;
+
+    let query = `
+        SELECT 
+            CallLogs.Phone, 
+            CallLogs.CallSID, 
+            CallLogs.RecordingSid, 
+            CallLogs.RecordingUrl, 
+            CallLogs.AISentiment, 
+            CallLogs.AISummary, 
+            CallLogs.Status, 
+            CallLogs.Duration, 
+            CallLogs.DialedOn, 
+            UserDetails.ID, 
+            UserDetails.Name, 
+            UserDetails.Email, 
+            UserDetails.ProfilePicture
+        FROM CallLogs
+        JOIN UserDetails ON CallLogs.DialedBy = UserDetails.ID
+    `;
+
     let params = [];
+
+    // If NOT admin department, restrict to self
     if (DepartmentID !== 5) {
-        query += " WHERE DialedBy = ?;";
-        params.push(16);
-        // params.push(ID);
+        query += " WHERE CallLogs.DialedBy = ? AND CallLogs.DialedOn BETWEEN ? AND ? ORDER BY CallLogs.DialedOn DESC";
+        params.push(ID, range.startDate, range.endDate);
+    } else {
+        if (type != 0) {
+            if (type == "1") {
+                // Admin: Type 1 = Profile-based logs
+                if (!selectedProfile || !range) {
+                    return res.status(400).json({ error: "selectedProfile and range are required" });
+                }
+                query += ` WHERE CallLogs.DialedBy = ? AND CallLogs.DialedOn BETWEEN ? AND ? ORDER BY CallLogs.DialedOn DESC `;
+                params.push(selectedProfile, range.startDate, range.endDate);
+            } else {
+                // Admin: Type ≠ 2 → Fetch file details
+                if (!selectedFile) return res.status(400).json({ error: "selectedFile is required" });
+                query = "SELECT * FROM Files WHERE ID = ?";
+                params = [selectedFile];
+            }
+        }
     }
 
     try {
         const [result] = await con.execute(query, params);
+        console.log(result)
         res.status(200).json(result);
     } catch (error) {
-        console.error("An error occurred while getting working shifts.", error);
-        res.status(500).json({ error: "Internal server error. Please try again later." });
+        console.error("Error fetching logs:", error);
+        res.status(500).json({ error: "Internal server error" });
     }
 });
+
 
 module.exports = router;

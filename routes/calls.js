@@ -45,7 +45,24 @@ router.get("/logs", async (req, res) => {
             } else {
                 // Admin: Type ≠ 2 → Fetch file details
                 if (!selectedFile) return res.status(400).json({ error: "selectedFile is required" });
-                query = "SELECT * FROM Files WHERE ID = ?";
+                query = `
+                    SELECT 
+                        DialingData.Phone, 
+                        DialingData.CallSID, 
+                        CallLogs.RecordingSid, 
+                        CallLogs.RecordingUrl, 
+                        CallLogs.AISentiment, 
+                        CallLogs.AISummary, 
+                        CallLogs.Status, 
+                        CallLogs.Duration, 
+                        CallLogs.DialedOn, 
+                        UserDetails.ID, 
+                        UserDetails.Name, 
+                        UserDetails.Email, 
+                        UserDetails.ProfilePicture
+                    FROM CallLogs
+                    JOIN UserDetails ON CallLogs.DialedBy = UserDetails.ID JOIN DialingData ON DialingData.CallSID = CallLogs.CallSID WHERE DialingData.FileID = ?;
+                `;
                 params = [selectedFile];
             }
         }
@@ -53,7 +70,6 @@ router.get("/logs", async (req, res) => {
 
     try {
         const [result] = await con.execute(query, params);
-        console.log(result)
         res.status(200).json(result);
     } catch (error) {
         console.error("Error fetching logs:", error);

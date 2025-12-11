@@ -16,7 +16,7 @@ router.get("/logs", async (req, res) => {
             CallLogs.RecordingUrl, 
             CallLogs.AISentiment, 
             CallLogs.AISummary, 
-            CallLogs.Status, 
+            CallLogs.Status,
             CallLogs.Duration, 
             CallLogs.DialedOn, 
             UserDetails.ID, 

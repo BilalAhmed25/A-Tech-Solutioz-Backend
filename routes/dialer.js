@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
+const axios = require("axios");
 const Twilio = require("twilio");
 const { con } = require("../database");
 
@@ -113,6 +114,7 @@ router.post("/end", bodyParser.json(), async (req, res) => {
         if (disposition === 'Callback later') {
             await con.query(`INSERT INTO Callbacks (UserID, CallSID, DateTime, Comments) VALUES ();`, [req.user.ID, callSid, callbackDateTime, callbackComments]);
         }
+        await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?;`, [disposition, callSid]);
         await upateCallLog(disposition, duration, callSid);
         return res.json({ success: true });
     } catch (err) {
@@ -122,9 +124,9 @@ router.post("/end", bodyParser.json(), async (req, res) => {
 });
 
 router.get("/recording", async (req, res) => {
-    const { url } = req.params;
+    const { recordingURL } = req.query;
     try {
-        const response = await axios.get(url, {
+        const response = await axios.get(recordingURL, {
             responseType: "stream",
             auth: {
                 username: TWILIO_ACCOUNT_SID,
@@ -133,6 +135,7 @@ router.get("/recording", async (req, res) => {
         });
 
         res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Content-Disposition", "inline; filename=recording.mp3");
         response.data.pipe(res);
     } catch (error) {
         console.error(error.message);

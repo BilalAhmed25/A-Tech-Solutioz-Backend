@@ -52,18 +52,26 @@ function calculateDailyMetrics(checkIn, checkOut, shiftStartStr, shiftEndStr, re
 
     // 5. Calculate Late Minutes (CheckIn > ShiftStart)
     if (inMoment && inMoment.isAfter(shiftStartMoment)) {
-        lateMinutes = inMoment.diff(shiftStartMoment, 'minutes');
+        if (!requiredHours) {
+            lateMinutes = inMoment.diff(shiftStartMoment, 'minutes');
+        }
     }
 
     // 6. Calculate Left Early Minutes (CheckOut < ShiftEnd)
     // Only calculate if they actually checked out
     if (outMoment && outMoment.isBefore(shiftEndMoment)) {
-        leftEarlyMinutes = shiftEndMoment.diff(outMoment, 'minutes');
+        const earlyMinutes = shiftEndMoment.diff(outMoment, 'minutes');
+        leftEarlyMinutes = earlyMinutes - (requiredHours * 60)
     }
 
     // 7. Calculate Extra Hours (CheckOut > ShiftEnd)
     // Requirement: Only calculate time AFTER shift end. Do not include early check-in.
-    if (outMoment && outMoment.isAfter(shiftEndMoment)) {
+    // if (outMoment && outMoment.isAfter(shiftEndMoment)) {
+    //     extraMinutes = outMoment.diff(shiftEndMoment, 'minutes');
+    // }
+
+    const shiftHours = moment(shiftEndStr).diff(moment(shiftEndStr), 'minutes');
+    if (workingMinutes > shiftHours) {
         extraMinutes = outMoment.diff(shiftEndMoment, 'minutes');
     }
 
@@ -107,7 +115,13 @@ async function getCheckInOut(userID, shiftStart, day) {
 
     // Determine check-in and check-out
     const checkIn = logs.find(l => moment(l.PunchTime).isBetween(checkInStart, checkInEnd, null, '[]'))?.PunchTime || null;
-    const checkOut = logs.reverse().find(l => moment(l.PunchTime).isBetween(checkIn, checkOutEnd, null, '[]'))?.PunchTime || null;
+    // const checkOut = logs.reverse().find(l => moment(l.PunchTime).isBetween(checkIn, checkOutEnd, null, '[]'))?.PunchTime || null;
+    const checkOut = logs
+        .reverse()
+        .find(l =>
+            moment(l.PunchTime).isAfter(checkIn) &&      // strictly after check-in
+            moment(l.PunchTime).isBefore(checkOutEnd)     // within range
+        )?.PunchTime || null;
 
     return { checkIn, checkOut };
 }

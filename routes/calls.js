@@ -31,7 +31,7 @@ router.get("/logs", async (req, res) => {
 
     // If NOT admin department, restrict to self
     if (DepartmentID !== 5) {
-        query += " WHERE CallLogs.DialedBy = ? AND CallLogs.DialedOn BETWEEN ? AND ? ORDER BY CallLogs.DialedOn DESC";
+        query += " WHERE CallLogs.DialedBy = ? AND CallLogs.DialedOn BETWEEN ? AND ? ORDER BY CallLogs.ID DESC";
         params.push(ID, range.startDate, range.endDate);
     } else {
         if (type != 0) {
@@ -40,7 +40,7 @@ router.get("/logs", async (req, res) => {
                 if (!selectedProfile || !range) {
                     return res.status(400).json({ error: "selectedProfile and range are required" });
                 }
-                query += ` WHERE CallLogs.DialedBy = ? AND CallLogs.DialedOn BETWEEN ? AND ? ORDER BY CallLogs.DialedOn DESC `;
+                query += ` WHERE CallLogs.DialedBy = ? AND CallLogs.DialedOn BETWEEN ? AND ? ORDER BY CallLogs.ID DESC;`;
                 params.push(selectedProfile, range.startDate, range.endDate);
             } else {
                 // Admin: Type ≠ 2 → Fetch file details
@@ -61,10 +61,12 @@ router.get("/logs", async (req, res) => {
                         UserDetails.Email, 
                         UserDetails.ProfilePicture
                     FROM CallLogs
-                    JOIN UserDetails ON CallLogs.DialedBy = UserDetails.ID JOIN DialingData ON DialingData.CallSID = CallLogs.CallSID WHERE DialingData.FileID = ?;
+                    JOIN UserDetails ON CallLogs.DialedBy = UserDetails.ID JOIN DialingData ON DialingData.CallSID = CallLogs.CallSID WHERE DialingData.FileID = ?  ORDER BY CallLogs.ID DESC;
                 `;
                 params = [selectedFile];
             }
+        } else {
+            query += " ORDER BY CallLogs.ID DESC";
         }
     }
 

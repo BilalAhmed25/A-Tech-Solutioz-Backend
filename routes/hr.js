@@ -208,7 +208,7 @@ router.post("/upload-attendance", upload.single("file"), async (req, res) => {
                         return "(" + new Array(dbCols.length).fill("?").join(", ") + ")";
                     });
 
-                    const bulkInsertSQL = ` INSERT INTO iclock_transaction (${sqlColumns}, punch_state) VALUES ${valuePlaceholders.join(", "), '0'} `;
+                    const bulkInsertSQL = ` INSERT INTO iclock_transaction (${sqlColumns}) VALUES ${valuePlaceholders.join(", ")} `;
                     // Execute ONE query for all rows
                     await attendanceDB.query(bulkInsertSQL, values);
 

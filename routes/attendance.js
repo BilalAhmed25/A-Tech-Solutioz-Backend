@@ -100,7 +100,7 @@ async function getCheckInOut(userID, shiftStart, day) {
     const [logs] = await attendanceDB.execute(`
         SELECT emp_code AS UserID, punch_time AS PunchTime
         FROM iclock_transaction
-        WHERE punch_state='0' AND emp_code=? 
+        WHERE punch_state=0 AND emp_code=? 
           AND punch_time BETWEEN ? AND ?
         ORDER BY punch_time ASC
     `, [userID, checkInStart.format('YYYY-MM-DD HH:mm:ss'), checkOutEnd.format('YYYY-MM-DD HH:mm:ss')]);

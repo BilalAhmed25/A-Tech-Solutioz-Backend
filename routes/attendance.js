@@ -95,7 +95,7 @@ function calculateDailyMetrics(checkIn, checkOut, shiftStartStr, shiftEndStr, re
             ? requiredHours * 60     // Hourly employee
             : 9 * 60;                // Full-time employee
 
-        extraMinutes = workingMinutes - baseMinutes - lateMinutes;
+        extraMinutes = workingMinutes - baseMinutes;
 
         if (extraMinutes < 0) {
             extraMinutes = 0;

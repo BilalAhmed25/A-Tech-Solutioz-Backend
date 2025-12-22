@@ -9,19 +9,19 @@ router.get("/logs", async (req, res) => {
     const { type, selectedProfile, selectedFile, range } = req.query.filters;
 
     let query = `
-        SELECT 
-            CallLogs.Phone, 
-            CallLogs.CallSID, 
-            CallLogs.RecordingSid, 
-            CallLogs.RecordingUrl, 
-            CallLogs.AISentiment, 
-            CallLogs.AISummary, 
+        SELECT
+            CallLogs.Phone,
+            CallLogs.CallSID,
+            CallLogs.RecordingSid,
+            CallLogs.RecordingUrl,
+            CallLogs.AISentiment,
+            CallLogs.AISummary,
             CallLogs.Status,
-            CallLogs.Duration, 
-            CallLogs.DialedOn, 
-            UserDetails.ID, 
-            UserDetails.Name, 
-            UserDetails.Email, 
+            CallLogs.Duration,
+            CallLogs.DialedOn,
+            UserDetails.ID,
+            UserDetails.Name,
+            UserDetails.Email,
             UserDetails.ProfilePicture
         FROM CallLogs
         JOIN UserDetails ON CallLogs.DialedBy = UserDetails.ID
@@ -79,5 +79,14 @@ router.get("/logs", async (req, res) => {
     }
 });
 
+router.get("/call-dispositions", async (req, res) => {
+    try {
+        const [result] = await con.execute("SELECT * FROM CallDispositions");
+        res.status(200).json(result);
+    } catch (error) {
+        console.error("Error fetching logs:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
 
 module.exports = router;

@@ -30,8 +30,8 @@ function calculateDailyMetrics(checkIn, checkOut, shiftStartStr, shiftEndStr, re
     }
 
     // 2. Parse Shift Timings
-    const shiftStartMoment = moment(`${dayDate}T${shiftStartStr}`);
-    let shiftEndMoment = moment(`${dayDate}T${shiftEndStr}`);
+    const shiftStartMoment = moment(`${dayDate} ${shiftStartStr}`, 'YYYY-MM-DD HH:mm:ss', true);
+    let shiftEndMoment = moment(`${dayDate} ${shiftEndStr}`, 'YYYY-MM-DD HH:mm:ss', true);
 
     // Handle overnight shifts (e.g., Start 22:00, End 06:00)
     if (shiftEndMoment.isBefore(shiftStartMoment)) {
@@ -53,15 +53,25 @@ function calculateDailyMetrics(checkIn, checkOut, shiftStartStr, shiftEndStr, re
     // 5. Calculate Late Minutes (CheckIn > ShiftStart)
     if (inMoment && inMoment.isAfter(shiftStartMoment)) {
         if (!requiredHours) {
-            lateMinutes = inMoment.diff(shiftStartMoment, 'minutes');
+            const mnt = inMoment.diff(shiftStartMoment, 'minutes');
+            lateMinutes = mnt > 15 ? mnt : 0;
         }
     }
 
     // 6. Calculate Left Early Minutes (CheckOut < ShiftEnd)
     // Only calculate if they actually checked out
-    if (outMoment && outMoment.isBefore(shiftEndMoment)) {
-        const earlyMinutes = shiftEndMoment.diff(outMoment, 'minutes');
-        leftEarlyMinutes = earlyMinutes - (requiredHours * 60)
+    // if (outMoment && outMoment.isBefore(shiftEndMoment)) {
+    //     const earlyMinutes = shiftEndMoment.diff(outMoment, 'minutes');
+    //     leftEarlyMinutes = earlyMinutes - (requiredHours * 60)
+    // }
+
+    // 6. Calculate Left Early Minutes (based on total working time)
+    const requiredMinutes = requiredHours
+        ? requiredHours * 60
+        : 9 * 60;
+
+    if (workingMinutes > 0 && workingMinutes < requiredMinutes) {
+        leftEarlyMinutes = requiredMinutes - workingMinutes;
     }
 
     // 7. Calculate Extra Hours (CheckOut > ShiftEnd)
@@ -70,9 +80,26 @@ function calculateDailyMetrics(checkIn, checkOut, shiftStartStr, shiftEndStr, re
     //     extraMinutes = outMoment.diff(shiftEndMoment, 'minutes');
     // }
 
-    const shiftHours = moment(shiftEndStr).diff(moment(shiftEndStr), 'minutes');
-    if (workingMinutes > shiftHours) {
-        extraMinutes = outMoment.diff(shiftEndMoment, 'minutes');
+    // const shiftHours = moment(shiftEndStr).diff(moment(shiftEndStr), 'minutes');
+    // if (workingMinutes > shiftHours) {
+    //     extraMinutes = outMoment.diff(shiftEndMoment, 'minutes');
+    // }
+
+    // if (outMoment && outMoment.isAfter(shiftEndMoment)) {
+    //     extraMinutes = outMoment.diff(shiftEndMoment, 'minutes');
+    // }
+
+    // 7. Calculate Extra Minutes (Hourly vs Full-time)
+    if (workingMinutes > 0) {
+        const baseMinutes = requiredHours
+            ? requiredHours * 60     // Hourly employee
+            : 9 * 60;                // Full-time employee
+
+        extraMinutes = workingMinutes - baseMinutes - lateMinutes;
+
+        if (extraMinutes < 0) {
+            extraMinutes = 0;
+        }
     }
 
     return { lateMinutes, leftEarlyMinutes, extraMinutes, workingMinutes, status };

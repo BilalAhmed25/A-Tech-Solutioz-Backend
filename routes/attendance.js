@@ -354,4 +354,93 @@ router.get('/range', async (req, res) => {
     }
 });
 
+router.get('/range-with-salary', async (req, res) => {
+    const { startDate, endDate } = req.query;
+    if (!startDate || !endDate)
+        return res.status(400).json({ error: 'Missing parameters' });
+
+    try {
+        // 1. Get all active users
+        const [users] = await con.execute(`
+            SELECT u.ID AS UserID, u.Name, u.ProfilePicture,
+                   d.DepartmentName, des.DesignationTitle
+            FROM UserDetails u
+            LEFT JOIN Departments d ON u.DepartmentID = d.ID
+            LEFT JOIN Designations des ON u.DesignationID = des.ID
+            WHERE u.Status='Active' AND d.ID != 5
+        `);
+
+        const results = [];
+        const startMoment = moment(startDate, "YYYY-MM-DD", true);
+        const endMoment = moment(endDate, "YYYY-MM-DD", true);
+
+        if (!startMoment.isValid() || !endMoment.isValid()) {
+            return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
+        }
+
+        for (const user of users) {
+            // 2. Fetch salary for this user covering the period
+            const [salaryRows] = await con.execute(`
+                SELECT Salary, FromDate, TillDate
+                FROM SalaryRecords
+                WHERE EmpID = ?
+                  AND FromDate <= ?
+                  AND (TillDate IS NULL OR TillDate >= ?)
+                ORDER BY FromDate DESC
+                LIMIT 1
+            `, [user.UserID, endDate, startDate]);
+
+            const salaryRecord = salaryRows[0] || null;
+            const salary = salaryRecord?.Salary || 0;
+
+            // 3. Loop through each day in range and calculate attendance
+            let curDate = startMoment.clone();
+            while (curDate <= endMoment) {
+                const day = curDate.format('YYYY-MM-DD');
+
+                const shift = await getUserShift(user.UserID, day);
+                const shiftStart = shift?.StartTime;
+                const shiftEnd = shift?.EndTime;
+
+                let checkIn = null;
+                let checkOut = null;
+                if (shiftStart) {
+                    const io = await getCheckInOut(user.UserID, shiftStart, day);
+                    checkIn = io.checkIn;
+                    checkOut = io.checkOut;
+                }
+
+                const requiredHours = await getHourlyRequiredHours(user.UserID);
+
+                // Calculate attendance metrics
+                const metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
+
+                results.push({
+                    UserID: user.UserID,
+                    Name: user.Name,
+                    ProfilePicture: user.ProfilePicture,
+                    DepartmentName: user.DepartmentName,
+                    DesignationTitle: user.DesignationTitle,
+                    CheckIn: checkIn,
+                    CheckOut: checkOut,
+                    Status: metrics.status,
+                    LateMinutes: metrics.lateMinutes,
+                    LeftEarlyMinutes: metrics.leftEarlyMinutes,
+                    WorkingMinutes: metrics.workingMinutes,
+                    ExtraHours: metrics.extraMinutes,
+                    Date: day,
+                    Salary: salary
+                });
+
+                curDate.add(1, 'day');
+            }
+        }
+
+        res.json(results);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 module.exports = router;

@@ -299,8 +299,12 @@ router.get('/range', async (req, res) => {
         const results = [];
 
         for (const user of users) {
-            let curDate = moment(startDate);
-            const end = moment(endDate);
+            let curDate = moment(startDate, "YYYY-MM-DD", true);
+            const end = moment(endDate, "YYYY-MM-DD", true);
+
+            if (!curDate.isValid() || !end.isValid()) {
+                return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
+            }
 
             while (curDate <= end) {
                 const day = curDate.format('YYYY-MM-DD');

@@ -427,6 +427,7 @@ router.get('/range-with-salary', async (req, res) => {
                     LateMinutes: metrics.lateMinutes,
                     LeftEarlyMinutes: metrics.leftEarlyMinutes,
                     WorkingMinutes: metrics.workingMinutes,
+                    RequiredMinutes: requiredHours ? requiredHours * 60 : 9 * 60,
                     ExtraHours: metrics.extraMinutes,
                     Date: day,
                     Salary: salary

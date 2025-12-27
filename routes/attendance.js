@@ -102,7 +102,7 @@ function calculateDailyMetrics(checkIn, checkOut, shiftStartStr, shiftEndStr, re
         }
     }
 
-    return { lateMinutes, leftEarlyMinutes, extraMinutes, workingMinutes, status };
+    return { lateMinutes, leftEarlyMinutes, extraMinutes, workingMinutes, status, isPaid: false };
 }
 
 // Fetch shift info for a user
@@ -153,6 +153,50 @@ async function getCheckInOut(userID, shiftStart, day) {
     return { checkIn, checkOut };
 }
 
+async function isHoliday(day) {
+    const [rows] = await con.execute(
+        `SELECT * FROM Holidays WHERE HolidayDate=? AND IsPaid=1`,
+        [day]
+    );
+    return rows.length ? rows[0] : null;
+}
+
+async function getApprovedLeave(userID, day) {
+    const [rows] = await con.execute(`
+        SELECT lr.*, lt.IsPaid
+        FROM LeaveRequests lr
+        JOIN LeaveTypes lt ON lr.LeaveTypeID = lt.ID
+        WHERE lr.UserID=?
+            AND lr.Status='Approved'
+            AND ? BETWEEN lr.StartDate AND lr.EndDate
+        LIMIT 1
+    `, [userID, day]);
+
+    return rows[0] || null;
+}
+
+// -------------------- Helper Function for Leave/Holiday --------------------
+function applyLeaveHolidayRules(metrics, leave, holiday) {
+    if (holiday) {
+        metrics.status = 'Holiday';
+        metrics.workingMinutes = 0;
+        metrics.isPaid = true;
+    } else if (leave) {
+        metrics.status = leave.IsPaid ? 'Paid Leave' : 'Unpaid Leave';
+        metrics.workingMinutes = 0;
+        metrics.isPaid = leave.IsPaid === 1;
+    }
+
+    if (metrics.status === 'Paid Leave' || metrics.status === 'Holiday' || metrics.status === 'Unpaid Leave') {
+        metrics.lateMinutes = 0;
+        metrics.leftEarlyMinutes = 0;
+        metrics.extraMinutes = 0;
+    }
+
+    return metrics;
+}
+
+
 // -------------------- API: /day --------------------
 router.get('/day', async (req, res) => {
     const { day } = req.query;
@@ -183,9 +227,13 @@ router.get('/day', async (req, res) => {
             }
 
             const requiredHours = await getHourlyRequiredHours(user.UserID);
+            const metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
 
             // Calculate all metrics using the new logic
-            const metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
+            const holiday = await isHoliday(day);
+            const leave = await getApprovedLeave(user.UserID, day);
+
+            metrics = applyLeaveHolidayRules(metrics, leave, holiday);
 
             results.push({
                 UserID: user.UserID,
@@ -201,7 +249,9 @@ router.get('/day', async (req, res) => {
                 WorkingMinutes: metrics.workingMinutes,
                 ExtraHours: metrics.extraMinutes, // Updated Logic
                 shiftStart,
-                shiftEnd
+                shiftEnd,
+                PaidDay: metrics.status === 'Paid Leave' || metrics.status === 'Holiday',
+                DayType: metrics.status // Explicit for UI
             });
         }
 
@@ -254,6 +304,11 @@ router.get('/user', async (req, res) => {
             // Calculate all metrics using the new logic
             const metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
 
+            const holiday = await isHoliday(day);
+            const leave = await getApprovedLeave(user.UserID, day);
+
+            metrics = applyLeaveHolidayRules(metrics, leave, holiday);
+
             results.push({
                 UserID: user.UserID,
                 Name: user.Name,
@@ -267,87 +322,15 @@ router.get('/user', async (req, res) => {
                 LeftEarlyMinutes: metrics.leftEarlyMinutes, // New Field
                 WorkingMinutes: metrics.workingMinutes,
                 ExtraHours: metrics.extraMinutes, // Updated Logic
-                Date: day
+                Date: day,
+                PaidDay: metrics.status === 'Paid Leave' || metrics.status === 'Holiday',
+                DayType: metrics.status // Explicit for UI
             });
 
             curDate.add(1, 'day');
         }
 
         res.json(results);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-
-// -------------------- /range API --------------------
-router.get('/range', async (req, res) => {
-    const { startDate, endDate } = req.query;
-    if (!startDate || !endDate) return res.status(400).json({ error: 'Missing parameters' });
-
-    try {
-        const [users] = await con.execute(`
-            SELECT u.ID AS UserID, u.Name, u.ProfilePicture,
-                   d.DepartmentName, des.DesignationTitle
-            FROM UserDetails u
-            LEFT JOIN Departments d ON u.DepartmentID = d.ID
-            LEFT JOIN Designations des ON u.DesignationID = des.ID
-            WHERE u.Status='Active' AND d.ID != 5
-        `);
-
-        const results = [];
-
-        for (const user of users) {
-            let curDate = moment(startDate, "YYYY-MM-DD", true);
-            const end = moment(endDate, "YYYY-MM-DD", true);
-
-            if (!curDate.isValid() || !end.isValid()) {
-                return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
-            }
-
-            while (curDate <= end) {
-                const day = curDate.format('YYYY-MM-DD');
-
-                const shift = await getUserShift(user.UserID, day);
-                const shiftStart = shift?.StartTime;
-                const shiftEnd = shift?.EndTime;
-
-                let checkIn = null;
-                let checkOut = null;
-                if (shiftStart) {
-                    const io = await getCheckInOut(user.UserID, shiftStart, day);
-                    checkIn = io.checkIn;
-                    checkOut = io.checkOut;
-                }
-
-                const requiredHours = await getHourlyRequiredHours(user.UserID);
-
-                // Calculate all metrics using the new logic
-                const metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
-
-                results.push({
-                    UserID: user.UserID,
-                    Name: user.Name,
-                    ProfilePicture: user.ProfilePicture,
-                    DepartmentName: user.DepartmentName,
-                    DesignationTitle: user.DesignationTitle,
-                    CheckIn: checkIn,
-                    CheckOut: checkOut,
-                    Status: metrics.status,
-                    LateMinutes: metrics.lateMinutes,
-                    LeftEarlyMinutes: metrics.leftEarlyMinutes, // New Field
-                    WorkingMinutes: metrics.workingMinutes,
-                    ExtraHours: metrics.extraMinutes, // Updated Logic
-                    Date: day
-                });
-
-                curDate.add(1, 'day');
-            }
-        }
-
-        res.json(results);
-
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Internal server error' });
@@ -415,6 +398,23 @@ router.get('/range-with-salary', async (req, res) => {
                 // Calculate attendance metrics
                 const metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
 
+                const holiday = await isHoliday(day);
+                const leave = await getApprovedLeave(user.UserID, day);
+
+                metrics = applyLeaveHolidayRules(metrics, leave, holiday);
+
+                const requiredMinutes = requiredHours ? requiredHours * 60 : 9 * 60;
+
+                let payableMinutes = 0;
+
+                if (metrics.status === 'Present' || metrics.status === 'Left without checkout') {
+                    payableMinutes = metrics.workingMinutes;
+                }
+
+                if (metrics.status === 'Paid Leave' || metrics.status === 'Holiday') {
+                    payableMinutes = requiredMinutes;
+                }
+
                 results.push({
                     UserID: user.UserID,
                     Name: user.Name,
@@ -430,7 +430,10 @@ router.get('/range-with-salary', async (req, res) => {
                     RequiredMinutes: requiredHours ? requiredHours * 60 : 9 * 60,
                     ExtraHours: metrics.extraMinutes,
                     Date: day,
-                    Salary: salary
+                    Salary: salary,
+                    PaidDay: metrics.status === 'Paid Leave' || metrics.status === 'Holiday',
+                    DayType: metrics.status // Explicit for UI
+
                 });
 
                 curDate.add(1, 'day');
@@ -442,6 +445,24 @@ router.get('/range-with-salary', async (req, res) => {
         console.error(err);
         res.status(500).json({ error: 'Internal server error' });
     }
+});
+
+router.post('/apply-for-leave', async (req, res) => {
+    const { userID, startDate, endDate, reason } = req.body;
+    await con.execute(` INSERT INTO LeaveRequests (UserID, StartDate, EndDate, Reason) VALUES (?,?,?,?);`, [userID, startDate, endDate, reason]);
+    res.json('Leave applied successfully');
+});
+
+router.post('/leave-action', async (req, res) => {
+    const { leaveID, status, approvedBy } = req.body;
+    await con.execute(` UPDATE LeaveRequests SET Status=?, ApprovedBy=?, ApprovedAt=NOW() WHERE ID=? `, [status, approvedBy, leaveID]);
+    res.json({ message: `Leave ${status}` });
+});
+
+router.post('/holidays', async (req, res) => {
+    const { title, date } = req.body;
+    await con.execute(`INSERT INTO Holidays (Title, HolidayDate) VALUES (?,?)`, [title, date]);
+    res.json({ message: 'Holiday added' });
 });
 
 module.exports = router;

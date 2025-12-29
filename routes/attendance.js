@@ -265,6 +265,124 @@ router.get('/day', async (req, res) => {
 // -------------------- /user API --------------------
 router.get('/user', async (req, res) => {
     const { userID, startDate, endDate } = req.query;
+    if (!userID || !startDate || !endDate) {
+        return res.status(400).json({ error: 'Missing parameters' });
+    }
+
+    try {
+        const [users] = await con.execute(`
+            SELECT u.ID AS UserID, u.Name, u.ProfilePicture,
+                   d.DepartmentName, des.DesignationTitle
+            FROM UserDetails u
+            LEFT JOIN Departments d ON u.DepartmentID = d.ID
+            LEFT JOIN Designations des ON u.DesignationID = des.ID
+            WHERE u.ID = ? AND u.Status='Active' AND d.ID != 5
+        `, [userID]);
+
+        if (!users.length) return res.status(404).json({ error: 'User not found' });
+        const user = users[0];
+
+        // Fetch leaves & holidays once
+        const [leavesRows] = await con.execute(`
+            SELECT StartDate, EndDate, Status, IsPaid
+            FROM LeaveRequests
+            WHERE UserID=? AND Status='Approved'
+              AND (StartDate <= ? AND EndDate >= ?)
+        `, [userID, endDate, startDate]);
+
+        const [holidaysRows] = await con.execute(`
+            SELECT HolidayDate, Title, IsPaid
+            FROM Holidays
+            WHERE HolidayDate BETWEEN ? AND ?
+        `, [startDate, endDate]);
+
+        // Map leaves & holidays
+        const leaveMap = {};
+        leavesRows.forEach(l => {
+            let cur = moment.max(moment(l.StartDate), moment(startDate));
+            const last = moment.min(moment(l.EndDate), moment(endDate));
+            while (cur.isSameOrBefore(last, 'day')) {
+                leaveMap[cur.format('YYYY-MM-DD')] = l;
+                cur.add(1, 'day');
+            }
+        });
+
+        const holidayMap = {};
+        holidaysRows.forEach(h => {
+            holidayMap[moment(h.HolidayDate).format('YYYY-MM-DD')] = h;
+        });
+
+        const results = [];
+        let curDate = moment(startDate);
+        const end = moment(endDate);
+        const requiredHours = await getHourlyRequiredHours(user.UserID);
+
+        while (curDate.isSameOrBefore(end, 'day')) {
+            const day = curDate.format('YYYY-MM-DD');
+            const weekday = curDate.day(); // 0 = Sunday, 6 = Saturday
+
+            const shift = await getUserShift(user.UserID, day);
+            const shiftStart = shift?.StartTime;
+            const shiftEnd = shift?.EndTime;
+
+            let checkIn = null, checkOut = null;
+            if (shiftStart) {
+                const io = await getCheckInOut(user.UserID, shiftStart, day);
+                checkIn = io.checkIn;
+                checkOut = io.checkOut;
+            }
+
+            // Calculate metrics
+            let metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
+
+            // Apply leave & holiday rules
+            const leave = leaveMap[day] || null;
+            const holiday = holidayMap[day] || null;
+            metrics = applyLeaveHolidayRules(metrics, leave, holiday);
+
+            // **Force weekend detection BEFORE default Absent**
+            if (!leave && !holiday && (weekday === 0 || weekday === 6)) {
+                metrics.status = 'Weekend';
+                metrics.lateMinutes = 0;
+                metrics.leftEarlyMinutes = 0;
+                metrics.workingMinutes = 0;
+                metrics.extraMinutes = 0;
+            } else if (!shiftStart && !leave && !holiday && metrics.status === 'Absent') {
+                metrics.status = 'Absent';
+            }
+
+            results.push({
+                UserID: user.UserID,
+                Name: user.Name,
+                ProfilePicture: user.ProfilePicture,
+                DepartmentName: user.DepartmentName,
+                DesignationTitle: user.DesignationTitle,
+                CheckIn: checkIn,
+                CheckOut: checkOut,
+                Status: metrics.status,
+                LateMinutes: metrics.lateMinutes,
+                LeftEarlyMinutes: metrics.leftEarlyMinutes,
+                WorkingMinutes: metrics.workingMinutes,
+                ExtraHours: metrics.extraMinutes,
+                Date: day,
+                PaidDay: metrics.status === 'Paid Leave' || metrics.status === 'Holiday',
+                DayType: metrics.status
+            });
+
+            curDate.add(1, 'day');
+        }
+
+        res.json(results);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+
+
+router.get('/user-bk', async (req, res) => {
+    const { userID, startDate, endDate } = req.query;
     if (!userID || !startDate || !endDate) return res.status(400).json({ error: 'Missing parameters' });
 
     try {
@@ -474,7 +592,7 @@ router.get('/user-leaves', async (req, res) => {
         }
 
         const [rows] = await con.execute(
-            `SELECT StartDate, EndDate, Status FROM LeaveRequests WHERE UserID = ?`,
+            `SELECT StartDate, EndDate, IsPaid, Status FROM LeaveRequests WHERE UserID = ?`,
             [userID]
         );
 
@@ -489,7 +607,8 @@ router.get('/user-leaves', async (req, res) => {
             while (current.isSameOrBefore(end, 'day')) {
                 leaves.push({
                     Date: current.format('YYYY-MM-DD'),
-                    Status: leave.Status || 'Pending'
+                    Status: leave.Status,
+                    IsPaid: leave.IsPaid
                 });
                 current.add(1, 'day');
             }

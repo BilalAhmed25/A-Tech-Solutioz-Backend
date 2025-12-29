@@ -302,7 +302,7 @@ router.get('/user', async (req, res) => {
             const requiredHours = await getHourlyRequiredHours(user.UserID);
 
             // Calculate all metrics using the new logic
-            const metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
+            let metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
 
             const holiday = await isHoliday(day);
             const leave = await getApprovedLeave(user.UserID, day);
@@ -463,6 +463,70 @@ router.post('/holidays', async (req, res) => {
     const { title, date } = req.body;
     await con.execute(`INSERT INTO Holidays (Title, HolidayDate) VALUES (?,?)`, [title, date]);
     res.json({ message: 'Holiday added' });
+});
+
+router.get('/user-leaves', async (req, res) => {
+    try {
+        const { userID, startDate, endDate } = req.query;
+
+        if (!userID || !startDate || !endDate) {
+            return res.status(400).json({ message: 'userID, startDate, and endDate are required' });
+        }
+
+        const [rows] = await con.execute(
+            `SELECT StartDate, EndDate, Status FROM LeaveRequests WHERE UserID = ?`,
+            [userID]
+        );
+
+        const leaves = [];
+
+        rows.forEach(leave => {
+            const start = moment(leave.StartDate).isAfter(moment(startDate)) ? moment(leave.StartDate) : moment(startDate);
+            const end = moment(leave.EndDate).isBefore(moment(endDate)) ? moment(leave.EndDate) : moment(endDate);
+
+            let current = start.clone();
+
+            while (current.isSameOrBefore(end, 'day')) {
+                leaves.push({
+                    Date: current.format('YYYY-MM-DD'),
+                    Status: leave.Status || 'Pending'
+                });
+                current.add(1, 'day');
+            }
+        });
+
+        res.json(leaves);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Get holidays within a date range
+router.get('/holidays', async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query;
+
+        if (!startDate || !endDate) {
+            return res.status(400).json({ message: 'startDate and endDate are required' });
+        }
+
+        const [rows] = await con.execute(
+            `SELECT HolidayDate, Title, IsPaid FROM Holidays WHERE HolidayDate BETWEEN ? AND ?`,
+            [startDate, endDate]
+        );
+
+        const holidays = rows.map(h => ({
+            Date: moment(h.HolidayDate).format('YYYY-MM-DD'),
+            Title: h.Title,
+            IsPaid: h.IsPaid
+        }));
+
+        res.json(holidays);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Server error' });
+    }
 });
 
 module.exports = router;

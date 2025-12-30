@@ -199,6 +199,8 @@ const applyLeaveHolidayRules = (metrics, leave, holiday) => {
 router.get('/day', async (req, res) => {
     const { day } = req.query;
     if (!day) return res.status(400).json({ error: 'Please provide day parameter' });
+    const [holiday] = await con.execute(` SELECT * FROM Holidays WHERE HolidayDate = ?`, [day]);
+    if (holiday.length > 0) return res.json('Holiday');
 
     try {
         const [users] = await con.execute(`
@@ -225,7 +227,7 @@ router.get('/day', async (req, res) => {
             }
 
             const requiredHours = await getHourlyRequiredHours(user.UserID);
-            const metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
+            let metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
 
             // Calculate all metrics using the new logic
             const holiday = await isHoliday(day);
@@ -511,7 +513,7 @@ router.get('/range-with-salary', async (req, res) => {
                 const requiredHours = await getHourlyRequiredHours(user.UserID);
 
                 // Calculate attendance metrics
-                const metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
+                let metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
 
                 const holiday = await isHoliday(day);
                 const leave = await getApprovedLeave(user.UserID, day);

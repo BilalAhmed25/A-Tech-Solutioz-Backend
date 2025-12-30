@@ -153,15 +153,12 @@ async function getCheckInOut(userID, shiftStart, day) {
     return { checkIn, checkOut };
 }
 
-async function isHoliday(day) {
-    const [rows] = await con.execute(
-        `SELECT * FROM Holidays WHERE HolidayDate=? AND IsPaid=1`,
-        [day]
-    );
+const isHoliday = async (day) => {
+    const [rows] = await con.execute(`SELECT * FROM Holidays WHERE HolidayDate=? AND IsPaid=1`, [day]);
     return rows.length ? rows[0] : null;
 }
 
-async function getApprovedLeave(userID, day) {
+const getApprovedLeave = async (userID, day) => {
     const [rows] = await con.execute(`
         SELECT lr.*, lt.IsPaid
         FROM LeaveRequests lr
@@ -176,9 +173,10 @@ async function getApprovedLeave(userID, day) {
 }
 
 // -------------------- Helper Function for Leave/Holiday --------------------
-function applyLeaveHolidayRules(metrics, leave, holiday) {
+const applyLeaveHolidayRules = (metrics, leave, holiday) => {
     if (holiday) {
         metrics.status = 'Holiday';
+        metrics.holidayTitle = holiday.Title;
         metrics.workingMinutes = 0;
         metrics.isPaid = true;
     } else if (leave) {
@@ -244,6 +242,7 @@ router.get('/day', async (req, res) => {
                 CheckIn: checkIn,
                 CheckOut: checkOut,
                 Status: metrics.status,
+                HolidayTitle: metrics.holidayTitle ? metrics.holidayTitle : null,
                 LateMinutes: metrics.lateMinutes,
                 LeftEarlyMinutes: metrics.leftEarlyMinutes, // New Field
                 WorkingMinutes: metrics.workingMinutes,
@@ -290,11 +289,7 @@ router.get('/user', async (req, res) => {
               AND (StartDate <= ? AND EndDate >= ?)
         `, [userID, endDate, startDate]);
 
-        const [holidaysRows] = await con.execute(`
-            SELECT HolidayDate, Title, IsPaid
-            FROM Holidays
-            WHERE HolidayDate BETWEEN ? AND ?
-        `, [startDate, endDate]);
+        const [holidaysRows] = await con.execute(` SELECT HolidayDate, Title, IsPaid FROM Holidays WHERE HolidayDate BETWEEN ? AND ? `, [startDate, endDate]);
 
         // Map leaves & holidays
         const leaveMap = {};
@@ -360,6 +355,7 @@ router.get('/user', async (req, res) => {
                 CheckIn: checkIn,
                 CheckOut: checkOut,
                 Status: metrics.status,
+                HolidayTitle: metrics.holidayTitle ? metrics.holidayTitle : null,
                 LateMinutes: metrics.lateMinutes,
                 LeftEarlyMinutes: metrics.leftEarlyMinutes,
                 WorkingMinutes: metrics.workingMinutes,
@@ -436,6 +432,7 @@ router.get('/user-bk', async (req, res) => {
                 CheckIn: checkIn,
                 CheckOut: checkOut,
                 Status: metrics.status,
+                HolidayTitle: metrics.holidayTitle ? metrics.holidayTitle : null,
                 LateMinutes: metrics.lateMinutes,
                 LeftEarlyMinutes: metrics.leftEarlyMinutes, // New Field
                 WorkingMinutes: metrics.workingMinutes,

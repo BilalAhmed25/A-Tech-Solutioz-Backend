@@ -379,88 +379,51 @@ router.get('/user', async (req, res) => {
 
 
 
-router.get('/user-bk', async (req, res) => {
-    const { userID, startDate, endDate } = req.query;
-    if (!userID || !startDate || !endDate) return res.status(400).json({ error: 'Missing parameters' });
+router.get('/range-with-salary', async (req, res) => {
+    const { startDate, endDate } = req.query;
 
-    try {
-        const [users] = await con.execute(`
-            SELECT u.ID AS UserID, u.Name, u.ProfilePicture,
-                   d.DepartmentName, des.DesignationTitle
-            FROM UserDetails u
-            LEFT JOIN Departments d ON u.DepartmentID = d.ID
-            LEFT JOIN Designations des ON u.DesignationID = des.ID
-            WHERE u.ID = ? AND u.Status='Active' AND d.ID != 5
-        `, [userID]);
+    const rows = await db.query(`
+        SELECT
+            a.user_id AS "UserID",
+            a.date AS "Date",
+            a.status AS "Status",
+            a.late_minutes AS "LateMinutes",
+            a.working_minutes AS "WorkingMinutes",
+            a.required_minutes AS "RequiredMinutes",
+            a.extra_hours AS "ExtraHours",
 
-        if (!users.length) return res.status(404).json({ error: 'User not found' });
-        const user = users[0];
+            u.name AS "Name",
+            u.profile_picture AS "ProfilePicture",
+            d.title AS "DesignationTitle",
 
-        const results = [];
-        let curDate = moment(startDate);
-        const end = moment(endDate);
+            COALESCE(s.basic_salary, 0) AS "Salary"
+        FROM attendance a
+        JOIN users u ON u.id = a.user_id
+        LEFT JOIN salaries s ON s.user_id = u.id
+        LEFT JOIN designations d ON d.id = u.designation_id
+        WHERE a.date BETWEEN $1 AND $2
+        ORDER BY u.id, a.date
+    `, [startDate, endDate]);
 
-        while (curDate <= end) {
-            const day = curDate.format('YYYY-MM-DD');
-
-            const shift = await getUserShift(user.UserID, day);
-            const shiftStart = shift?.StartTime;
-            const shiftEnd = shift?.EndTime;
-
-            let checkIn = null;
-            let checkOut = null;
-            if (shiftStart) {
-                const io = await getCheckInOut(user.UserID, shiftStart, day);
-                checkIn = io.checkIn;
-                checkOut = io.checkOut;
-            }
-
-            const requiredHours = await getHourlyRequiredHours(user.UserID);
-
-            // Calculate all metrics using the new logic
-            let metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
-
-            const holiday = await isHoliday(day);
-            const leave = await getApprovedLeave(user.UserID, day);
-
-            metrics = applyLeaveHolidayRules(metrics, leave, holiday);
-
-            results.push({
-                UserID: user.UserID,
-                Name: user.Name,
-                ProfilePicture: user.ProfilePicture,
-                DepartmentName: user.DepartmentName,
-                DesignationTitle: user.DesignationTitle,
-                CheckIn: checkIn,
-                CheckOut: checkOut,
-                Status: metrics.status,
-                HolidayTitle: metrics.holidayTitle ? metrics.holidayTitle : null,
-                LateMinutes: metrics.lateMinutes,
-                LeftEarlyMinutes: metrics.leftEarlyMinutes, // New Field
-                WorkingMinutes: metrics.workingMinutes,
-                ExtraHours: metrics.extraMinutes, // Updated Logic
-                Date: day,
-                PaidDay: metrics.status === 'Paid Leave' || metrics.status === 'Holiday',
-                DayType: metrics.status // Explicit for UI
-            });
-
-            curDate.add(1, 'day');
-        }
-
-        res.json(results);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Internal server error' });
-    }
+    res.json(rows.rows);
 });
 
-router.get('/range-with-salary', async (req, res) => {
+router.get('/range-with-salary-old', async (req, res) => {
     const { startDate, endDate } = req.query;
     if (!startDate || !endDate)
         return res.status(400).json({ error: 'Missing parameters' });
 
+    const startMoment = moment(startDate, 'YYYY-MM-DD', true);
+    const endMoment = moment(endDate, 'YYYY-MM-DD', true);
+
+    if (!startMoment.isValid() || !endMoment.isValid()) {
+        return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
+    }
+
     try {
-        // 1. Get all active users
+        /* =======================
+           1️⃣ Fetch active users
+        ======================= */
         const [users] = await con.execute(`
             SELECT u.ID AS UserID, u.Name, u.ProfilePicture,
                    d.DepartmentName, des.DesignationTitle
@@ -470,66 +433,135 @@ router.get('/range-with-salary', async (req, res) => {
             WHERE u.Status='Active' AND d.ID != 5
         `);
 
-        const results = [];
-        const startMoment = moment(startDate, "YYYY-MM-DD", true);
-        const endMoment = moment(endDate, "YYYY-MM-DD", true);
+        if (!users.length) return res.json([]);
 
-        if (!startMoment.isValid() || !endMoment.isValid()) {
-            return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
-        }
+        const userIds = users.map(u => u.UserID);
+
+        /* =======================
+           2️⃣ Salaries (latest covering range)
+        ======================= */
+        const [salaryRows] = await con.execute(`
+            SELECT EmpID, Salary, FromDate, TillDate
+            FROM SalaryRecords
+            WHERE EmpID IN (${userIds.map(() => '?').join(',')})
+              AND FromDate <= ?
+              AND (TillDate IS NULL OR TillDate >= ?)
+            ORDER BY FromDate DESC
+        `, [...userIds, endDate, startDate]);
+
+        const salaryMap = {};
+        salaryRows.forEach(s => {
+            if (!salaryMap[s.EmpID]) salaryMap[s.EmpID] = s;
+        });
+
+        /* =======================
+           3️⃣ Leaves (bulk)
+        ======================= */
+        const [leavesRows] = await con.execute(`
+            SELECT UserID, StartDate, EndDate, IsPaid
+            FROM LeaveRequests
+            WHERE Status='Approved'
+              AND UserID IN (${userIds.map(() => '?').join(',')})
+              AND StartDate <= ?
+              AND EndDate >= ?
+        `, [...userIds, endDate, startDate]);
+
+        const leaveMap = {};
+        leavesRows.forEach(l => {
+            let cur = moment.max(moment(l.StartDate), startMoment);
+            const last = moment.min(moment(l.EndDate), endMoment);
+            while (cur.isSameOrBefore(last, 'day')) {
+                leaveMap[`${l.UserID}_${cur.format('YYYY-MM-DD')}`] = l;
+                cur.add(1, 'day');
+            }
+        });
+
+        /* =======================
+           4️⃣ Holidays (bulk)
+        ======================= */
+        const [holidaysRows] = await con.execute(`
+            SELECT HolidayDate, Title, IsPaid
+            FROM Holidays
+            WHERE HolidayDate BETWEEN ? AND ?
+        `, [startDate, endDate]);
+
+        const holidayMap = {};
+        holidaysRows.forEach(h => {
+            holidayMap[moment(h.HolidayDate).format('YYYY-MM-DD')] = h;
+        });
+
+        /* =======================
+           5️⃣ Cache helpers
+        ======================= */
+        const shiftCache = {};
+        const hoursCache = {};
+
+        const getShiftCached = async (userId, day) => {
+            const key = `${userId}_${day}`;
+            if (!shiftCache[key]) shiftCache[key] = await getUserShift(userId, day);
+            return shiftCache[key];
+        };
+
+        const getHoursCached = async (userId) => {
+            if (!hoursCache[userId]) {
+                hoursCache[userId] = await getHourlyRequiredHours(userId);
+            }
+            return hoursCache[userId];
+        };
+
+        /* =======================
+           6️⃣ Attendance calculation
+        ======================= */
+        const results = [];
 
         for (const user of users) {
-            // 2. Fetch salary for this user covering the period
-            const [salaryRows] = await con.execute(`
-                SELECT Salary, FromDate, TillDate
-                FROM SalaryRecords
-                WHERE EmpID = ?
-                  AND FromDate <= ?
-                  AND (TillDate IS NULL OR TillDate >= ?)
-                ORDER BY FromDate DESC
-                LIMIT 1
-            `, [user.UserID, endDate, startDate]);
+            const salary = salaryMap[user.UserID]?.Salary || 0;
+            const requiredHours = await getHoursCached(user.UserID);
 
-            const salaryRecord = salaryRows[0] || null;
-            const salary = salaryRecord?.Salary || 0;
-
-            // 3. Loop through each day in range and calculate attendance
             let curDate = startMoment.clone();
-            while (curDate <= endMoment) {
+            while (curDate.isSameOrBefore(endMoment, 'day')) {
                 const day = curDate.format('YYYY-MM-DD');
+                const weekday = curDate.day();
 
-                const shift = await getUserShift(user.UserID, day);
+                const shift = await getShiftCached(user.UserID, day);
                 const shiftStart = shift?.StartTime;
                 const shiftEnd = shift?.EndTime;
 
-                let checkIn = null;
-                let checkOut = null;
+                let checkIn = null, checkOut = null;
                 if (shiftStart) {
                     const io = await getCheckInOut(user.UserID, shiftStart, day);
                     checkIn = io.checkIn;
                     checkOut = io.checkOut;
                 }
 
-                const requiredHours = await getHourlyRequiredHours(user.UserID);
+                let metrics = calculateDailyMetrics(
+                    checkIn,
+                    checkOut,
+                    shiftStart,
+                    shiftEnd,
+                    requiredHours,
+                    day
+                );
 
-                // Calculate attendance metrics
-                let metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
+                const leave = leaveMap[`${user.UserID}_${day}`] || null;
+                const holiday = holidayMap[day] || null;
 
-                const holiday = await isHoliday(day);
-                const leave = await getApprovedLeave(user.UserID, day);
-
-                metrics = applyLeaveHolidayRules(metrics, leave, holiday);
-
-                const requiredMinutes = requiredHours ? requiredHours * 60 : 9 * 60;
-
-                let payableMinutes = 0;
-
-                if (metrics.status === 'Present' || metrics.status === 'Left without checkout') {
-                    payableMinutes = metrics.workingMinutes;
+                /* 🔥 PRIORITY ORDER */
+                if (leave) {
+                    metrics.status = leave.IsPaid ? 'Paid Leave' : 'Unpaid Leave';
+                    metrics.workingMinutes = 0;
+                    metrics.lateMinutes = 0;
+                    metrics.leftEarlyMinutes = 0;
+                    metrics.extraMinutes = 0;
                 }
-
-                if (metrics.status === 'Paid Leave' || metrics.status === 'Holiday') {
-                    payableMinutes = requiredMinutes;
+                else if (holiday) {
+                    metrics.status = 'Holiday';
+                    metrics.holidayTitle = holiday.Title;
+                    metrics.workingMinutes = 0;
+                }
+                else if (weekday === 0 || weekday === 6) {
+                    metrics.status = 'Weekend';
+                    metrics.workingMinutes = 0;
                 }
 
                 results.push({
@@ -541,16 +573,15 @@ router.get('/range-with-salary', async (req, res) => {
                     CheckIn: checkIn,
                     CheckOut: checkOut,
                     Status: metrics.status,
+                    HolidayTitle: metrics.holidayTitle || null,
                     LateMinutes: metrics.lateMinutes,
                     LeftEarlyMinutes: metrics.leftEarlyMinutes,
                     WorkingMinutes: metrics.workingMinutes,
-                    RequiredMinutes: requiredHours ? requiredHours * 60 : 9 * 60,
                     ExtraHours: metrics.extraMinutes,
-                    Date: day,
                     Salary: salary,
-                    PaidDay: metrics.status === 'Paid Leave' || metrics.status === 'Holiday',
-                    DayType: metrics.status // Explicit for UI
-
+                    Date: day,
+                    PaidDay: ['Paid Leave', 'Holiday'].includes(metrics.status),
+                    DayType: metrics.status
                 });
 
                 curDate.add(1, 'day');
@@ -558,11 +589,13 @@ router.get('/range-with-salary', async (req, res) => {
         }
 
         res.json(results);
+
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
+
 
 router.post('/apply-for-leave', async (req, res) => {
     const { userID, startDate, endDate, reason } = req.body;

@@ -50,12 +50,11 @@ function calculateDailyMetrics(checkIn, checkOut, shiftStartStr, shiftEndStr, re
         workingMinutes = calcOut.diff(inMoment, 'minutes');
     }
 
-    // 5. Calculate Late Minutes (CheckIn > ShiftStart)
-    if (inMoment && inMoment.isAfter(shiftStartMoment)) {
-        if (!requiredHours) {
-            const mnt = inMoment.diff(shiftStartMoment, 'minutes');
-            lateMinutes = mnt > 15 ? mnt : 0;
-        }
+    // 5. Calculate Late Minutes
+    const isHourly = !!requiredHours && requiredHours < 9;
+    if (!isHourly && inMoment && inMoment.isAfter(shiftStartMoment)) {
+        const lateDiff = inMoment.diff(shiftStartMoment, 'minutes');
+        lateMinutes = lateDiff > 15 ? lateDiff : 0;
     }
 
     // 6. Calculate Left Early Minutes (CheckOut < ShiftEnd)

@@ -66,9 +66,7 @@ function calculateDailyMetrics(checkIn, checkOut, shiftStartStr, shiftEndStr, re
     // }
 
     // 6. Calculate Left Early Minutes (based on total working time)
-    const requiredMinutes = requiredHours
-        ? requiredHours * 60
-        : 9 * 60;
+    const requiredMinutes = requiredHours ? requiredHours * 60 : 9 * 60;
 
     if (workingMinutes > 0 && workingMinutes < requiredMinutes) {
         leftEarlyMinutes = requiredMinutes - workingMinutes;
@@ -121,8 +119,34 @@ async function getUserShift(userID, day) {
 
 // Fetch required hours for hourly employees
 async function getHourlyRequiredHours(userID) {
-    const [rows] = await con.execute(`SELECT RequiredHours FROM HourlyEmployees WHERE EmployeeID=?`, [userID]);
-    return rows[0]?.RequiredHours || null;
+    const query = `
+    SELECT
+      CASE
+        WHEN usa.IsHourlyEmloyee = TRUE THEN he.RequiredHours
+        ELSE CAST(
+          TIME_TO_SEC(
+            TIMEDIFF(
+              IF(sd.EndTime <= sd.StartTime,
+                 ADDTIME(sd.EndTime, '24:00:00'),
+                 sd.EndTime
+              ),
+              sd.StartTime
+            )
+          ) / 3600
+          AS FLOAT
+        )
+      END AS RequiredHours
+    FROM UserShiftAssignments usa
+    LEFT JOIN ShiftDurations sd
+      ON usa.ShiftID = sd.ShiftID
+    LEFT JOIN HourlyEmployees he
+      ON he.EmployeeID = usa.UserID
+    WHERE usa.UserID = ?
+    LIMIT 1;
+  `;
+
+    const [rows] = await con.execute(query, [userID]);
+    return rows[0]?.RequiredHours ?? null;
 }
 
 // Fetch check-in and check-out within windows
@@ -377,38 +401,7 @@ router.get('/user', async (req, res) => {
     }
 });
 
-
-
 router.get('/range-with-salary', async (req, res) => {
-    const { startDate, endDate } = req.query;
-
-    const rows = await db.query(`
-        SELECT
-            a.user_id AS "UserID",
-            a.date AS "Date",
-            a.status AS "Status",
-            a.late_minutes AS "LateMinutes",
-            a.working_minutes AS "WorkingMinutes",
-            a.required_minutes AS "RequiredMinutes",
-            a.extra_hours AS "ExtraHours",
-
-            u.name AS "Name",
-            u.profile_picture AS "ProfilePicture",
-            d.title AS "DesignationTitle",
-
-            COALESCE(s.basic_salary, 0) AS "Salary"
-        FROM attendance a
-        JOIN users u ON u.id = a.user_id
-        LEFT JOIN salaries s ON s.user_id = u.id
-        LEFT JOIN designations d ON d.id = u.designation_id
-        WHERE a.date BETWEEN $1 AND $2
-        ORDER BY u.id, a.date
-    `, [startDate, endDate]);
-
-    res.json(rows.rows);
-});
-
-router.get('/range-with-salary-old', async (req, res) => {
     const { startDate, endDate } = req.query;
     if (!startDate || !endDate)
         return res.status(400).json({ error: 'Missing parameters' });
@@ -577,6 +570,7 @@ router.get('/range-with-salary-old', async (req, res) => {
                     LateMinutes: metrics.lateMinutes,
                     LeftEarlyMinutes: metrics.leftEarlyMinutes,
                     WorkingMinutes: metrics.workingMinutes,
+                    RequiredHours: requiredHours,
                     ExtraHours: metrics.extraMinutes,
                     Salary: salary,
                     Date: day,

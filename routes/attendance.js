@@ -119,30 +119,30 @@ async function getUserShift(userID, day) {
 // Fetch required hours for hourly employees
 async function getHourlyRequiredHours(userID) {
     const query = `
-    SELECT
-      CASE
-        WHEN usa.IsHourlyEmloyee = TRUE THEN he.RequiredHours
-        ELSE CAST(
-          TIME_TO_SEC(
-            TIMEDIFF(
-              IF(sd.EndTime <= sd.StartTime,
-                 ADDTIME(sd.EndTime, '24:00:00'),
-                 sd.EndTime
-              ),
-              sd.StartTime
-            )
-          ) / 3600
-          AS FLOAT
-        )
-      END AS RequiredHours
-    FROM UserShiftAssignments usa
-    LEFT JOIN ShiftDurations sd
-      ON usa.ShiftID = sd.ShiftID
-    LEFT JOIN HourlyEmployees he
-      ON he.EmployeeID = usa.UserID
-    WHERE usa.UserID = ?
-    LIMIT 1;
-  `;
+        SELECT
+            CASE
+                WHEN usa.IsHourlyEmloyee = TRUE THEN he.RequiredHours
+                ELSE CAST(
+                    TIME_TO_SEC(
+                        TIMEDIFF(
+                            IF(sd.EndTime <= sd.StartTime,
+                                ADDTIME(sd.EndTime, '24:00:00'),
+                                sd.EndTime
+                            ),
+                            sd.StartTime
+                        )
+                    ) / 3600
+                    AS FLOAT
+                )
+            END AS RequiredHours
+            FROM UserShiftAssignments usa
+                LEFT JOIN ShiftDurations sd
+                    ON usa.ShiftID = sd.ShiftID
+                LEFT JOIN HourlyEmployees he
+                    ON he.EmployeeID = usa.UserID
+            WHERE usa.UserID = ?
+            LIMIT 1;
+    `;
 
     const [rows] = await con.execute(query, [userID]);
     return rows[0]?.RequiredHours ?? null;
@@ -159,7 +159,7 @@ async function getCheckInOut(userID, shiftStart, day) {
         SELECT emp_code AS UserID, punch_time AS PunchTime
         FROM iclock_transaction
         WHERE punch_state=0 AND emp_code=? 
-          AND punch_time BETWEEN ? AND ?
+            AND punch_time BETWEEN ? AND ?
         ORDER BY punch_time ASC
     `, [userID, checkInStart.format('YYYY-MM-DD HH:mm:ss'), checkOutEnd.format('YYYY-MM-DD HH:mm:ss')]);
 
@@ -222,7 +222,7 @@ const applyLeaveHolidayRules = (metrics, leave, holiday) => {
 router.get('/day', async (req, res) => {
     const { day } = req.query;
     if (!day) return res.status(400).json({ error: 'Please provide day parameter' });
-    const [holiday] = await con.execute(` SELECT * FROM Holidays WHERE HolidayDate = ?`, [day]);
+    const [holiday] = await con.execute(`SELECT * FROM Holidays WHERE HolidayDate = ?`, [day]);
     if (holiday.length > 0) return res.json('Holiday');
 
     try {
@@ -253,10 +253,9 @@ router.get('/day', async (req, res) => {
             let metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
 
             // Calculate all metrics using the new logic
-            const holiday = await isHoliday(day);
             const leave = await getApprovedLeave(user.UserID, day);
 
-            metrics = applyLeaveHolidayRules(metrics, leave, holiday);
+            metrics = applyLeaveHolidayRules(metrics, leave, null);
 
             results.push({
                 UserID: user.UserID,
@@ -275,7 +274,7 @@ router.get('/day', async (req, res) => {
                 shiftStart,
                 shiftEnd,
                 PaidDay: metrics.status === 'Paid Leave' || metrics.status === 'Holiday',
-                DayType: metrics.status // Explicit for UI
+                DayType: (metrics.lateMinutes >= 120 || metrics.leftEarlyMinutes >= 120) ? 'Half Day' : metrics.status
             });
         }
 
@@ -314,7 +313,7 @@ router.get('/user', async (req, res) => {
               AND (StartDate <= ? AND EndDate >= ?)
         `, [userID, endDate, startDate]);
 
-        const [holidaysRows] = await con.execute(` SELECT HolidayDate, Title, IsPaid FROM Holidays WHERE HolidayDate BETWEEN ? AND ? `, [startDate, endDate]);
+        const [holidaysRows] = await con.execute(`SELECT HolidayDate, Title, IsPaid FROM Holidays WHERE HolidayDate BETWEEN ? AND ?;`, [startDate, endDate]);
 
         // Map leaves & holidays
         const leaveMap = {};
@@ -387,7 +386,8 @@ router.get('/user', async (req, res) => {
                 ExtraHours: metrics.extraMinutes,
                 Date: day,
                 PaidDay: metrics.status === 'Paid Leave' || metrics.status === 'Holiday',
-                DayType: metrics.status
+                // DayType: metrics.status
+                DayType: (metrics.lateMinutes >= 120 || metrics.leftEarlyMinutes >= 120) ? 'Half Day' : metrics.status
             });
 
             curDate.add(1, 'day');

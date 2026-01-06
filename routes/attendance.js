@@ -589,6 +589,28 @@ router.get('/range-with-salary', async (req, res) => {
     }
 });
 
+router.get('/salary-adjustments', async (req, res) => {
+    try {
+        const { month } = req.query; // format YYYY-MM
+
+        if (!month) {
+            return res.status(400).json({ error: 'Missing month parameter' });
+        }
+
+        const m = moment(month, 'YYYY-MM', true);
+        if (!m.isValid()) {
+            return res.status(400).json({ error: 'Invalid month format. Use YYYY-MM' });
+        }
+
+        const [rows] = await con.execute(`SELECT UserID, AdjustedAmount, Notes, Month FROM SalaryAdjustments WHERE Month = ?`, [month]);
+
+        res.json(rows);
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
 
 router.post('/apply-for-leave', async (req, res) => {
     const { userID, startDate, endDate, reason } = req.body;

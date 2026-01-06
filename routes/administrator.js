@@ -226,4 +226,48 @@ router.delete("/delete-lead-file", async (req, res) => {
     }
 });
 
+router.post('/adjust-pay-receipt', async (req, res) => {
+    try {
+        const { UserID, Month, AdjustedAmount, Notes } = req.body;
+        const AdjustedBy = req.user.ID;
+
+        if (!UserID || !Month || AdjustedAmount === undefined || !AdjustedBy) {
+            return res.status(400).json({ message: 'Required fields missing' });
+        }
+
+        // Insert or update if exists
+        const query = `
+            INSERT INTO SalaryAdjustments (UserID, Month, AdjustedAmount, AdjustedBy, Notes)
+            VALUES (?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                UserID = VALUES(UserID),
+                Month = VALUES(Month)
+            `;
+
+        await con.execute(query, [UserID, Month, AdjustedAmount, AdjustedBy, Notes || null]);
+
+        return res.json({ message: 'Adjustment saved successfully' });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ message: 'Server error' });
+    }
+});
+
+router.delete('/delete-pay-adjustment', async (req, res) => {
+    try {
+        const { UserID, Month } = req.query;
+
+        if (!UserID || !Month) {
+            return res.status(400).json({ message: 'Required fields missing' });
+        }
+
+        const query = `DELETE FROM SalaryAdjustments WHERE UserID = ? AND Month = ?;`;
+        await con.execute(query, [UserID, Month]);
+        return res.json({ message: 'Adjustment deleted successfully' });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ message: 'Server error' });
+    }
+});
+
 module.exports = router;

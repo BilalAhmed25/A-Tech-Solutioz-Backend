@@ -13,6 +13,7 @@ const express = require('express'),
     invoice = require('./routes/invoice'),
     auth = require('./routes/auth'),
     googleSheet = require('./routes/googleSheet'),
+    sms = require('./routes/sms'),
     calls = require('./routes/calls'),
     { verifyToken } = require('./authMiddleware'),
     { WebSocketServer } = require('ws'),
@@ -62,6 +63,7 @@ app.use('/invoice', invoice);
 app.use('/general', general);
 app.use('/google', googleSheet);
 app.use('/calls', calls);
+app.use('/sms', sms);
 
 // 🔥 SOCKET.IO SETUP
 const io = require("socket.io")(server, {

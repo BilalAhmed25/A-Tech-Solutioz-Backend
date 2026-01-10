@@ -21,7 +21,7 @@ const insertCallLog = async (phone = "", status = "", dialedBy = "", callSid = n
 };
 
 router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, res) => {
-    const { To, agentId } = req.body;
+    const { To, userID } = req.body;
     const response = new VoiceResponse();
 
     if (!To) {
@@ -33,7 +33,7 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
         // Real-time transcription
         const start = response.start();
         start.transcription({
-            statusCallbackUrl: `${BASE_URL_FOR_TWILIO_CALLBACKS}/transcription-callback`,
+            statusCallbackUrl: `${BASE_URL_FOR_TWILIO_CALLBACKS}/transcription-callback?userID=${userID}`,
             transcriptionEngine: 'google',
             track: 'both_tracks',
             languageCode: 'en-US',
@@ -92,23 +92,36 @@ router.post("/transcription-callback-old", bodyParser.urlencoded({ extended: fal
 
 router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }), (req, res) => {
     const event = req.body.TranscriptionEvent;
+
+    if (event !== "transcription-content") {
+        return res.sendStatus(200);
+    }
+
     const transcriptData = req.body.TranscriptionData
         ? JSON.parse(req.body.TranscriptionData)
         : null;
 
-    const callSid = req.body.CallSid; // 👈 VERY IMPORTANT
+    if (!transcriptData) return res.sendStatus(200);
 
-    if (event === "transcription-content" && transcriptData && callSid) {
-        global.io.to(callSid).emit("transcript", {
-            callSid,
-            track: req.body.Track || "inbound",
-            transcript: transcriptData.transcript,
-            final: req.body.Final === "true"
-        });
-    }
+    const callSid = req.body.CallSid;
+    const userID = req.query.userID;
+
+    const track = req.body.Track || 'inbound_track';
+    const final = req.body.Final === "true";
+    const transcript = transcriptData.transcript;
+
+    if (!callSid || !userID) return res.sendStatus(200);
+
+    global.io.to(`agent:${userID}`).emit("transcript", {
+        track,
+        transcript,
+        final,
+        callSid
+    });
 
     res.sendStatus(200);
 });
+
 
 router.post("/recording-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
     const { CallSid, RecordingUrl, RecordingSid, RecordingStatus } = req.body;

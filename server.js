@@ -77,15 +77,17 @@ const io = require("socket.io")(server, {
 global.io = io;
 
 io.on("connection", (socket) => {
-    socket.on("join-call", (callSid) => {
-        socket.join(callSid);
-        console.log("Socket joined call:", callSid);
+    socket.on("join-agent", (userId) => {
+        socket.join(`agent:${userId}`);
+        socket.agentId = userId;
+        console.log(`Agent ${userId} joined`);
     });
 
     socket.on("disconnect", () => {
-        console.log("Socket disconnected");
+        console.log(`Agent ${socket.agentId} disconnected`);
     });
 });
+
 
 app.get('*', function (req, res) {
     res.status(404).json('API not found.');

@@ -24,9 +24,9 @@ const insertCallLog = async (phone, dialedBy, callSid) => {
     }
 };
 
-const upateCallLog = async (status = "", duration = 0, callSid) => {
+const upateCallLog = async (status = "", duration = 0, callSid, transcripts = "") => {
     try {
-        await con.query(`UPDATE CallLogs SET Status = ?, Duration = ? WHERE CallSID = ?`, [status, duration, callSid]);
+        await con.query(`UPDATE CallLogs SET Status = ?, Duration = ?, Transcripts = ? WHERE CallSID = ?`, [status, duration, transcripts, callSid]);
     } catch (err) {
         console.error("Error:", err);
     }
@@ -109,13 +109,13 @@ router.post("/attach-callsid", bodyParser.json(), async (req, res) => {
 
 router.post("/end", bodyParser.json(), async (req, res) => {
     try {
-        const { callSid, disposition, duration, callbackDateTime, callbackComments } = req.body;
+        const { callSid, disposition, duration, callbackDateTime, callbackComments, transcripts } = req.body;
         if (!disposition || !callSid) return res.status(400).json({ error: "disposition and callSid are required." });
         if (disposition === 'Callback later') {
-            await con.query(`INSERT INTO Callbacks (UserID, CallSID, DateTime, Comments) VALUES ();`, [req.user.ID, callSid, callbackDateTime, callbackComments]);
+            await con.query(`INSERT INTO Callbacks (UserID, CallSID, DateTime, Comments) VALUES (?, ?, ?, ?);`, [req.user.ID, callSid, callbackDateTime, callbackComments]);
         }
         await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?;`, [disposition, callSid]);
-        await upateCallLog(disposition, duration, callSid);
+        await upateCallLog(disposition, duration, callSid, transcripts);
         return res.json({ success: true });
     } catch (err) {
         console.error("POST /end error:", err);

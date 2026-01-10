@@ -73,7 +73,7 @@ router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (re
     res.status(200).send("OK");
 });
 
-router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }), (req, res) => {
+router.post("/transcription-callback-old", bodyParser.urlencoded({ extended: false }), (req, res) => {
     const event = req.body.TranscriptionEvent;
     const transcriptData = req.body.TranscriptionData
         ? JSON.parse(req.body.TranscriptionData)
@@ -82,6 +82,26 @@ router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }
     if (event === "transcription-content" && transcriptData) {
         global.io.emit("transcript", {
             track: req.body.Track || 'inbound',
+            transcript: transcriptData.transcript,
+            final: req.body.Final === "true"
+        });
+    }
+
+    res.sendStatus(200);
+});
+
+router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }), (req, res) => {
+    const event = req.body.TranscriptionEvent;
+    const transcriptData = req.body.TranscriptionData
+        ? JSON.parse(req.body.TranscriptionData)
+        : null;
+
+    const callSid = req.body.CallSid; // 👈 VERY IMPORTANT
+
+    if (event === "transcription-content" && transcriptData && callSid) {
+        global.io.to(callSid).emit("transcript", {
+            callSid,
+            track: req.body.Track || "inbound",
             transcript: transcriptData.transcript,
             final: req.body.Final === "true"
         });

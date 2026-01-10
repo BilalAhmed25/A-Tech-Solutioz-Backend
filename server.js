@@ -77,9 +77,13 @@ const io = require("socket.io")(server, {
 global.io = io;
 
 io.on("connection", (socket) => {
-    console.log("✅ Socket connected:", socket.id);
-    socket.on("disconnect", (reason) => {
-        console.log("❌ Socket disconnected:", reason);
+    socket.on("join-call", (callSid) => {
+        socket.join(callSid);
+        console.log("Socket joined call:", callSid);
+    });
+
+    socket.on("disconnect", () => {
+        console.log("Socket disconnected");
     });
 });
 

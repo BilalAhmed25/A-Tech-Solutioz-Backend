@@ -79,6 +79,70 @@ router.get("/logs", async (req, res) => {
     }
 });
 
+router.get("/callbacks", async (req, res) => {
+    const { ID, DepartmentID } = req.user;
+    const { range, selectedProfile } = req.query.filters;
+
+    let query = `
+        SELECT 
+            Callbacks.ID,
+            Callbacks.UserID,
+            Callbacks.CallSID,
+            Callbacks.Status,
+            Callbacks.DateTime,
+            Callbacks.Comments,
+            Callbacks.CalingHistory,
+
+            UserDetails.Name,
+            UserDetails.Email,
+            UserDetails.ProfilePicture,
+
+            CallLogs.Phone,
+            CallLogs.Duration,
+            CallLogs.AISummary,
+            CallLogs.AISentiment,
+            CallLogs.RecordingUrl,
+            CallLogs.RecordingSid,
+            CallLogs.Transcripts,
+            CallLogs.DialedOn
+
+        FROM Callbacks
+        JOIN UserDetails 
+            ON Callbacks.UserID = UserDetails.ID
+        LEFT JOIN CallLogs 
+            ON CallLogs.CallSID = Callbacks.CallSID
+    `;
+
+    const params = [];
+    const conditions = [];
+
+    // 🔐 Normal user → only own callbacks
+    if (DepartmentID !== 5) {
+        conditions.push("Callbacks.UserID = ?");
+        params.push(ID);
+    }
+
+    // 👑 Admin → optional profile filter
+    if (DepartmentID === 5 && selectedProfile) {
+        conditions.push("Callbacks.UserID = ?");
+        params.push(selectedProfile);
+    }
+
+    if (conditions.length) {
+        query += " WHERE " + conditions.join(" AND ");
+    }
+
+    query += " ORDER BY Callbacks.DateTime DESC";
+
+    try {
+        const [rows] = await con.execute(query, params);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error("Error fetching callbacks:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
 router.get("/call-dispositions", async (req, res) => {
     try {
         const [result] = await con.execute("SELECT * FROM CallDispositions");

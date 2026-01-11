@@ -24,9 +24,9 @@ const insertCallLog = async (phone, dialedBy, callSid) => {
     }
 };
 
-const upateCallLog = async (status = "", duration = 0, callSid, transcripts = "") => {
+const upateCallLog = async (status = "", duration = 0, callSid, transcripts) => {
     try {
-        await con.query(`UPDATE CallLogs SET Status = ?, Duration = ?, Transcripts = ? WHERE CallSID = ?`, [status, duration, transcripts, callSid]);
+        await con.query(`UPDATE CallLogs SET Status = ?, Duration = ?, Transcripts = ? WHERE CallSID = ?`, [status, duration, JSON.stringify(transcripts), callSid]);
     } catch (err) {
         console.error("Error:", err);
     }
@@ -115,7 +115,7 @@ router.post("/end", bodyParser.json(), async (req, res) => {
             await con.query(`INSERT INTO Callbacks (UserID, CallSID, DateTime, Comments) VALUES (?, ?, ?, ?);`, [req.user.ID, callSid, callbackDateTime, callbackComments]);
         }
         await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?;`, [disposition, callSid]);
-        await upateCallLog(disposition, duration, callSid, transcripts);
+        await upateCallLog(disposition, duration, callSid, (transcripts || null));
         return res.json({ success: true });
     } catch (err) {
         console.error("POST /end error:", err);

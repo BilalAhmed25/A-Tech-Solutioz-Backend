@@ -91,7 +91,7 @@ router.get("/callbacks", async (req, res) => {
             Callbacks.Status,
             Callbacks.DateTime,
             Callbacks.Comments,
-            Callbacks.CalingHistory,
+            Callbacks.CallingHistory,
 
             UserDetails.Name,
             UserDetails.Email,

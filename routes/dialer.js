@@ -109,11 +109,32 @@ router.post("/attach-callsid", bodyParser.json(), async (req, res) => {
 
 router.post("/end", bodyParser.json(), async (req, res) => {
     try {
-        const { callSid, disposition, duration, callbackDateTime, callbackComments, transcripts } = req.body;
+        const { callSid, disposition, duration, callbackDateTime, callbackComments, transcripts, isCallback, callbackID } = req.body;
         if (!disposition || !callSid) return res.status(400).json({ error: "disposition and callSid are required." });
         if (disposition === 'Call back later' || disposition === 'Follow-up scheduled' || disposition === 'Appointment booked') {
-            await con.query(`INSERT INTO Callbacks (UserID, CallSID, Status, DateTime, Comments) VALUES (?, ?, ?, ?);`, [req.user.ID, callSid, disposition, callbackDateTime, callbackComments]);
+            await con.query(`INSERT INTO Callbacks (UserID, CallSID, Status, DateTime, Comments) VALUES (?, ?, ?, ?, ?);`, [req.user.ID, callSid, disposition, callbackDateTime, callbackComments]);
         }
+        if (isCallback) {
+            // 1️⃣ Fetch existing history
+            const [[callbackRow]] = await con.query(`SELECT CallingHistory FROM Callbacks WHERE ID = ?`, [callbackID]);
+
+            // 2️⃣ Parse existing history
+            let callingHistory = [];
+            if (callbackRow?.CallingHistory) {
+                try {
+                    callingHistory = JSON.parse(callbackRow.CallingHistory);
+                } catch {
+                    callingHistory = [];
+                }
+            }
+
+            // 3️⃣ Append current disposition WITH callSid
+            callingHistory.push({ callSid, status: disposition, dateTime: new Date().toISOString() });
+
+            // 4️⃣ Update Callbacks table
+           await con.query( `UPDATE Callbacks SET CallingHistory = ? WHERE ID = ?`, [JSON.stringify(callingHistory), callbackID] );
+        }
+
         await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?;`, [disposition, callSid]);
         await upateCallLog(disposition, duration, callSid, (transcripts || null));
         return res.json({ success: true });

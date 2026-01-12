@@ -111,8 +111,8 @@ router.post("/end", bodyParser.json(), async (req, res) => {
     try {
         const { callSid, disposition, duration, callbackDateTime, callbackComments, transcripts } = req.body;
         if (!disposition || !callSid) return res.status(400).json({ error: "disposition and callSid are required." });
-        if (disposition === 'Callback later') {
-            await con.query(`INSERT INTO Callbacks (UserID, CallSID, DateTime, Comments) VALUES (?, ?, ?, ?);`, [req.user.ID, callSid, callbackDateTime, callbackComments]);
+        if (disposition === 'Call back later' || disposition === 'Follow-up scheduled' || disposition === 'Appointment booked') {
+            await con.query(`INSERT INTO Callbacks (UserID, CallSID, Status, DateTime, Comments) VALUES (?, ?, ?, ?);`, [req.user.ID, callSid, disposition, callbackDateTime, callbackComments]);
         }
         await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?;`, [disposition, callSid]);
         await upateCallLog(disposition, duration, callSid, (transcripts || null));

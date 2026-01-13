@@ -34,39 +34,45 @@ router.get("/logs", async (req, res) => {
         query += " WHERE CallLogs.DialedBy = ? AND CallLogs.DialedOn BETWEEN ? AND ? ORDER BY CallLogs.ID DESC";
         params.push(ID, range.startDate, range.endDate);
     } else {
-        if (type != 0) {
-            if (type == "1") {
-                // Admin: Type 1 = Profile-based logs
-                if (!selectedProfile || !range) {
-                    return res.status(400).json({ error: "selectedProfile and range are required" });
-                }
-                query += ` WHERE CallLogs.DialedBy = ? AND CallLogs.DialedOn BETWEEN ? AND ? ORDER BY CallLogs.ID DESC;`;
-                params.push(selectedProfile, range.startDate, range.endDate);
-            } else {
-                // Admin: Type ≠ 2 → Fetch file details
-                if (!selectedFile) return res.status(400).json({ error: "selectedFile is required" });
-                query = `
-                    SELECT 
-                        DialingData.Phone, 
-                        DialingData.CallSID, 
-                        CallLogs.RecordingSid, 
-                        CallLogs.RecordingUrl, 
-                        CallLogs.AISentiment, 
-                        CallLogs.AISummary, 
-                        CallLogs.Status, 
-                        CallLogs.Duration, 
-                        CallLogs.DialedOn, 
-                        UserDetails.ID, 
-                        UserDetails.Name, 
-                        UserDetails.Email, 
-                        UserDetails.ProfilePicture
-                    FROM CallLogs
-                    JOIN UserDetails ON CallLogs.DialedBy = UserDetails.ID JOIN DialingData ON DialingData.CallSID = CallLogs.CallSID WHERE DialingData.FileID = ?  ORDER BY CallLogs.ID DESC;
-                `;
-                params = [selectedFile];
-            }
+        if (type == "1") {
+            query += `
+            WHERE CallLogs.DialedBy = ?
+            AND CallLogs.DialedOn BETWEEN ? AND ?
+            ORDER BY CallLogs.ID DESC
+        `;
+            params.push(selectedProfile, range.startDate, range.endDate);
+
+        } else if (type == "2") {
+            query = `
+            SELECT 
+                DialingData.Phone,
+                DialingData.CallSID,
+                CallLogs.RecordingSid,
+                CallLogs.RecordingUrl,
+                CallLogs.AISentiment,
+                CallLogs.AISummary,
+                CallLogs.Status,
+                CallLogs.Duration,
+                CallLogs.DialedOn,
+                UserDetails.ID,
+                UserDetails.Name,
+                UserDetails.Email,
+                UserDetails.ProfilePicture
+            FROM CallLogs
+            JOIN UserDetails ON CallLogs.DialedBy = UserDetails.ID
+            JOIN DialingData ON DialingData.CallSID = CallLogs.CallSID
+            WHERE DialingData.FileID = ?
+            ORDER BY CallLogs.ID DESC
+        `;
+            params = [selectedFile];
+
         } else {
-            query += " ORDER BY CallLogs.ID DESC";
+            // ✅ FIXED PART
+            query += `
+            WHERE CallLogs.DialedOn BETWEEN ? AND ?
+            ORDER BY CallLogs.ID DESC
+        `;
+            params.push(range.startDate, range.endDate);
         }
     }
 
@@ -81,7 +87,7 @@ router.get("/logs", async (req, res) => {
 
 router.get("/callbacks", async (req, res) => {
     const { ID, DepartmentID } = req.user;
-    const { range, selectedProfile } = req.query.filters;
+    const { range, selectedProfile } = req.query.filters || {};
 
     let query = `
         SELECT 
@@ -105,7 +111,6 @@ router.get("/callbacks", async (req, res) => {
             CallLogs.RecordingSid,
             CallLogs.Transcripts,
             CallLogs.DialedOn
-
         FROM Callbacks
         JOIN UserDetails 
             ON Callbacks.UserID = UserDetails.ID
@@ -116,16 +121,28 @@ router.get("/callbacks", async (req, res) => {
     const params = [];
     const conditions = [];
 
-    // 🔐 Normal user → only own callbacks
+    const hasValidRange =
+        range &&
+        typeof range === "object" &&
+        range.startDate &&
+        range.endDate;
+
+    // 🔐 Normal user → own callbacks
     if (DepartmentID !== 5) {
         conditions.push("Callbacks.UserID = ?");
         params.push(ID);
     }
 
-    // 👑 Admin → optional profile filter
+    // 👑 Admin → profile filter
     if (DepartmentID === 5 && selectedProfile) {
         conditions.push("Callbacks.UserID = ?");
         params.push(selectedProfile);
+    }
+
+    // 📅 Date range filter (FIXED)
+    if (hasValidRange) {
+        conditions.push("Callbacks.DateTime BETWEEN ? AND ?");
+        params.push(range.startDate, range.endDate);
     }
 
     if (conditions.length) {

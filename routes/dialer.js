@@ -121,18 +121,14 @@ router.post("/end", bodyParser.json(), async (req, res) => {
             // 2️⃣ Parse existing history
             let callingHistory = [];
             if (callbackRow?.CallingHistory) {
-                try {
-                    callingHistory = JSON.parse(callbackRow.CallingHistory);
-                } catch {
-                    callingHistory = [];
-                }
+                callingHistory = callbackRow.CallingHistory;
             }
 
             // 3️⃣ Append current disposition WITH callSid
             callingHistory.push({ callSid, status: disposition, dateTime: new Date().toISOString() });
 
             // 4️⃣ Update Callbacks table
-           await con.query( `UPDATE Callbacks SET CallingHistory = ? WHERE ID = ?`, [JSON.stringify(callingHistory), callbackID] );
+            await con.query(`UPDATE Callbacks SET CallingHistory = ? WHERE ID = ?`, [JSON.stringify(callingHistory), callbackID]);
         }
 
         await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?;`, [disposition, callSid]);

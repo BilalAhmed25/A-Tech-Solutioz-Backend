@@ -48,7 +48,11 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
             // answerOnBridge: true,
         });
 
-        dial.number(To);
+        // dial.number(To);
+        dial.number({
+            machineDetection: 'Enable', // Activates detection
+            amdStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/amd-status`, // Where to send the result
+        }, To);
         res.type("text/xml").send(response.toString());
     } catch (error) {
         console.error(error);
@@ -60,34 +64,25 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
 
 router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
     const { CallSid, AnsweredBy } = req.body;
+    const twilioClient = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
     try {
-        const status = AnsweredBy !== "human" ? AnsweredBy : "Human";
+        // Twilio returns: human, machine_start, machine_end_beep, or unknown
         if (AnsweredBy !== "human") {
+            const status = AnsweredBy;
+
+            // 1. Update your databases
             await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?`, [status, CallSid]);
             await con.query(`UPDATE CallLogs SET Status = ? WHERE CallSID = ?`, [status, CallSid]);
+
+            // 2. Hang up the call
             await twilioClient.calls(CallSid).update({ status: "completed" });
         }
     } catch (err) {
-        console.error("AMD DB Update Error:", err);
+        console.error("AMD Disconnect Error:", err);
     }
+
     res.status(200).send("OK");
-});
-
-router.post("/transcription-callback-old", bodyParser.urlencoded({ extended: false }), (req, res) => {
-    const event = req.body.TranscriptionEvent;
-    const transcriptData = req.body.TranscriptionData
-        ? JSON.parse(req.body.TranscriptionData)
-        : null;
-
-    if (event === "transcription-content" && transcriptData) {
-        global.io.emit("transcript", {
-            track: req.body.Track || 'inbound',
-            transcript: transcriptData.transcript,
-            final: req.body.Final === "true"
-        });
-    }
-
-    res.sendStatus(200);
 });
 
 router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }), (req, res) => {

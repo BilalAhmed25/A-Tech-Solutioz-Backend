@@ -160,4 +160,37 @@ router.get("/recording", async (req, res) => {
     }
 });
 
+router.get("/get-call-status", async (req, res) => {
+    const { callSid } = req.query;
+    try {
+        // Look up the status we just wrote in /amd-status
+        const [rows] = await con.query(
+            `SELECT Status FROM CallLogs WHERE CallSID = ? LIMIT 1`,
+            [callSid]
+        );
+
+        if (rows.length > 0) {
+            res.json({ status: rows[0].Status });
+        } else {
+            res.json({ status: "in-progress" });
+        }
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.post("/update-duration", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+    const { callSid, duration } = req.body;
+    try {
+        await con.query(
+            `UPDATE CallLogs SET Duration = ? WHERE CallSID = ?`,
+            [Number(duration), callSid]
+        );
+        res.status(200).send("Duration updated");
+    } catch (err) {
+        console.error("Error updating duration:", err);
+        res.status(500).send("Internal Server Error");
+    }
+});
+
 module.exports = router;

@@ -22,6 +22,7 @@ const insertCallLog = async (phone = "", status = "", dialedBy = "", callSid = n
 
 router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, res) => {
     const { To, userID } = req.body;
+    const parentCallSid = req.body.CallSid;
     const response = new VoiceResponse();
 
     if (!To) {
@@ -51,7 +52,7 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
         // dial.number(To);
         dial.number({
             machineDetection: 'Enable', // Activates detection
-            amdStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/amd-status`, // Where to send the result
+            amdStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/amd-status?parentSid=${parentCallSid}&userID=${userID}&phone=${To}`,
         }, To);
         res.type("text/xml").send(response.toString());
     } catch (error) {
@@ -63,27 +64,36 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
 });
 
 router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
-    const { CallSid, AnsweredBy } = req.body;
-    const twilioClient = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+    const { parentSid, userID } = req.query;
+    const { AnsweredBy } = req.body;
 
-    try {
-        // Twilio returns: human, machine_start, machine_end_beep, or unknown
-        if (AnsweredBy !== "human") {
-            const status = AnsweredBy;
+    if (AnsweredBy !== "human") {
+        const reportStatus = AnsweredBy === "fax" ? "Number not in service" : "Voicemail";
 
-            // 1. Update your databases
-            await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?`, [status, CallSid]);
-            await con.query(`UPDATE CallLogs SET Status = ? WHERE CallSID = ?`, [status, CallSid]);
+        try {
+            await con.query(`UPDATE CallLogs SET Status = ? WHERE CallSID = ?`, [reportStatus, parentSid]);
+            await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?`, [reportStatus, parentSid]);
 
-            // 2. Hang up the call
-            await twilioClient.calls(CallSid).update({ status: "completed" });
+            // 1. TELL FRONTEND TO DISCONNECT FIRST
+            if (global.io) {
+                global.io.to(`agent:${userID}`).emit("auto-disposition-trigger", {
+                    status: reportStatus,
+                    callSid: parentSid
+                });
+            }
+
+            // 2. HANG UP TWILIO CALL
+            const twilioClient = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+            // We terminate the Parent call to ensure both ends drop immediately
+            await twilioClient.calls(parentSid).update({ status: "completed" });
+
+        } catch (err) {
+            console.error("AMD Mapping Error:", err);
         }
-    } catch (err) {
-        console.error("AMD Disconnect Error:", err);
     }
-
     res.status(200).send("OK");
 });
+
 
 router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }), (req, res) => {
     const event = req.body.TranscriptionEvent;

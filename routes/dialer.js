@@ -50,13 +50,23 @@ router.get("/token", (req, res) => {
     }
 });
 
+router.post("/insert-call-log", bodyParser.json(), async (req, res) => {
+    try {
+        const { callSid, leadID, phoneNumber, isCallback, callbackID } = req.body;
+        const dialedBy = req.user?.ID;
+        await con.query(`INSERT INTO CallLogs (Phone, CallSID, DialedBy) VALUES (?, ?, ?)`, [normalizePhone(phoneNumber), callSid, dialedBy]);
+        return res.json({ success: true });
+    } catch (err) {
+        console.error("attach-callsid error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 router.get("/next", async (req, res) => {
     const { ID } = req.user;
     try {
         const getNextLead = async () => {
-            const [rows] = await con.query(
-                `SELECT * FROM DialingData WHERE (Status IS NULL OR Status = '') ORDER BY LeadID ASC LIMIT 1`
-            );
+            const [rows] = await con.query(`SELECT * FROM DialingData WHERE (Status IS NULL OR Status = '') ORDER BY LeadID ASC LIMIT 1`);
 
             if (!rows || rows.length === 0) return null;
             return rows[0];
@@ -162,12 +172,10 @@ router.get("/recording", async (req, res) => {
 
 router.get("/get-call-status", async (req, res) => {
     const { callSid } = req.query;
+    console.log(callSid)
     try {
         // Look up the status we just wrote in /amd-status
-        const [rows] = await con.query(
-            `SELECT Status FROM CallLogs WHERE CallSID = ? LIMIT 1`,
-            [callSid]
-        );
+        const [rows] = await con.query(`SELECT Status FROM CallLogs WHERE CallSID = ? LIMIT 1`, [callSid]);
 
         if (rows.length > 0) {
             res.json({ status: rows[0].Status });

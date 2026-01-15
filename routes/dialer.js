@@ -62,6 +62,71 @@ router.post("/insert-call-log", bodyParser.json(), async (req, res) => {
     }
 });
 
+router.post("/auto-end", bodyParser.json(), async (req, res) => {
+    try {
+        const { callSid, duration, transcripts } = req.body;
+        if (!callSid) {
+            return res.status(400).json({ error: "callSid is required" });
+        }
+
+        await con.query(`UPDATE CallLogs SET Duration = ?, Transcripts = ? WHERE CallSID = ?`, [duration, JSON.stringify(transcripts), callSid]);
+        return res.json({ success: true });
+    } catch (err) {
+        console.error("POST /auto-end error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.post("/end", bodyParser.json(), async (req, res) => {
+    try {
+        const { callSid, disposition, duration, callbackDateTime, callbackComments, transcripts, isCallback, callbackID } = req.body;
+
+        if (!callSid || !disposition) {
+            return res.status(400).json({ error: "callSid and disposition are required" });
+        }
+
+        // 1️⃣ Handle callback creation
+        const callbackDispositions = ["Call back later", "Follow-up scheduled", "Appointment booked", "Demo scheduled"];
+
+        if (callbackDispositions.includes(disposition)) {
+            await con.query(
+                `INSERT INTO Callbacks (UserID, CallSID, Status, DateTime, Comments)
+                 VALUES (?, ?, ?, ?, ?)`,
+                [req.user.ID, callSid, disposition, callbackDateTime, callbackComments]
+            );
+        }
+
+        // 2️⃣ Update existing callback history (if this call itself was a callback)
+        if (isCallback && callbackID) {
+            const [[row]] = await con.query(`SELECT CallingHistory FROM Callbacks WHERE ID = ?`, [callbackID]);
+
+            let history = [];
+            if (row?.CallingHistory) {
+                history = row.CallingHistory;
+            }
+
+            history.push({
+                callSid,
+                status: disposition,
+                dateTime: new Date().toISOString()
+            });
+
+            await con.query(`UPDATE Callbacks SET CallingHistory = ? WHERE ID = ?`, [JSON.stringify(history), callbackID]);
+        }
+
+        // 3️⃣ Update dialing data
+        await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?`, [disposition, callSid]);
+
+        // 4️⃣ Update call log
+        await upateCallLog(disposition, duration, callSid, transcripts || null);
+
+        return res.json({ success: true });
+    } catch (err) {
+        console.error("POST /end error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 router.get("/next", async (req, res) => {
     const { ID } = req.user;
     try {
@@ -117,39 +182,6 @@ router.post("/attach-callsid", bodyParser.json(), async (req, res) => {
     }
 });
 
-router.post("/end", bodyParser.json(), async (req, res) => {
-    try {
-        const { callSid, disposition, duration, callbackDateTime, callbackComments, transcripts, isCallback, callbackID } = req.body;
-        if (!disposition || !callSid) return res.status(400).json({ error: "disposition and callSid are required." });
-        if (disposition === 'Call back later' || disposition === 'Follow-up scheduled' || disposition === 'Appointment booked') {
-            await con.query(`INSERT INTO Callbacks (UserID, CallSID, Status, DateTime, Comments) VALUES (?, ?, ?, ?, ?);`, [req.user.ID, callSid, disposition, callbackDateTime, callbackComments]);
-        }
-        if (isCallback) {
-            // 1️⃣ Fetch existing history
-            const [[callbackRow]] = await con.query(`SELECT CallingHistory FROM Callbacks WHERE ID = ?`, [callbackID]);
-
-            // 2️⃣ Parse existing history
-            let callingHistory = [];
-            if (callbackRow?.CallingHistory) {
-                callingHistory = callbackRow.CallingHistory;
-            }
-
-            // 3️⃣ Append current disposition WITH callSid
-            callingHistory.push({ callSid, status: disposition, dateTime: new Date().toISOString() });
-
-            // 4️⃣ Update Callbacks table
-            await con.query(`UPDATE Callbacks SET CallingHistory = ? WHERE ID = ?`, [JSON.stringify(callingHistory), callbackID]);
-        }
-
-        await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?;`, [disposition, callSid]);
-        await upateCallLog(disposition, duration, callSid, (transcripts || null));
-        return res.json({ success: true });
-    } catch (err) {
-        console.error("POST /end error:", err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
 router.get("/recording", async (req, res) => {
     const { recordingURL } = req.query;
     try {
@@ -172,7 +204,6 @@ router.get("/recording", async (req, res) => {
 
 router.get("/get-call-status", async (req, res) => {
     const { callSid } = req.query;
-    console.log(callSid)
     try {
         // Look up the status we just wrote in /amd-status
         const [rows] = await con.query(`SELECT Status FROM CallLogs WHERE CallSID = ? LIMIT 1`, [callSid]);
@@ -184,20 +215,6 @@ router.get("/get-call-status", async (req, res) => {
         }
     } catch (err) {
         res.status(500).json({ error: err.message });
-    }
-});
-
-router.post("/update-duration", bodyParser.urlencoded({ extended: false }), async (req, res) => {
-    const { callSid, duration } = req.body;
-    try {
-        await con.query(
-            `UPDATE CallLogs SET Duration = ? WHERE CallSID = ?`,
-            [Number(duration), callSid]
-        );
-        res.status(200).send("Duration updated");
-    } catch (err) {
-        console.error("Error updating duration:", err);
-        res.status(500).send("Internal Server Error");
     }
 });
 

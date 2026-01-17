@@ -44,9 +44,14 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
 
         const dial = response.dial({
             callerId: TWILIO_NUMBER,
+            timeout: 16,
             record: 'record-from-answer',
             recordingStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/recording-status`,
             // answerOnBridge: true,
+
+            statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/dial-status?parentSid=${parentCallSid}&userID=${userID}&phone=${To}`,
+            statusCallbackMethod: 'POST',
+            statusCallbackEvent: ['completed']
         });
 
         // dial.number(To);
@@ -71,7 +76,7 @@ router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (re
         const reportStatus = AnsweredBy === "fax" ? "Number not in service" : "Voicemail";
 
         try {
-            await con.query(`UPDATE CallLogs SET Status = ? WHERE CallSID = ?`, [reportStatus, parentSid]);
+            await con.query(`UPDATE CallLogs SET Status = ? WHERE CallSID = ? AND (Status IS NULL OR Status = '');`, [reportStatus, parentSid]);
             await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?`, [reportStatus, parentSid]);
 
             // 1. TELL FRONTEND TO DISCONNECT FIRST
@@ -94,6 +99,68 @@ router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (re
     res.status(200).send("OK");
 });
 
+router.post("/dial-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+    const { CallStatus, CallSid } = req.body;
+    const { parentSid, userID, phone } = req.query;
+
+    let finalStatus = null;
+
+    switch (CallStatus) {
+        case "busy":
+            finalStatus = "Busy";
+            break;
+
+        case "no-answer":
+            finalStatus = "No answer";
+            break;
+
+        case "failed":
+            finalStatus = "Number not in service";
+            break;
+
+        case "canceled":
+            finalStatus = "Canceled";
+            break;
+
+        default:
+            return res.sendStatus(200); // Ignore ringing/initiated/answered
+    }
+
+    try {
+        // Update DB
+        await con.query(`UPDATE CallLogs SET Status = ? WHERE CallSID = ? AND (Status IS NULL OR Status = '');`, [finalStatus, parentSid]);
+        await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?`, [finalStatus, parentSid]);
+
+        // Notify frontend (same as AMD flow)
+        if (global.io) {
+            global.io.to(`agent:${userID}`).emit("auto-disposition-trigger", {
+                status: finalStatus,
+                callSid: parentSid
+            });
+        }
+
+        // Force hangup (safety)
+        const twilioClient = Twilio(
+            process.env.TWILIO_ACCOUNT_SID,
+            process.env.TWILIO_AUTH_TOKEN
+        );
+
+        try {
+            await twilioClient.calls(parentSid).fetch().then(call => {
+                if (call.status !== "completed") {
+                    return twilioClient.calls(parentSid).update({ status: "completed" });
+                }
+            });
+        } catch (e) {
+            // Ignore if already completed
+        }
+
+    } catch (err) {
+        console.error("Dial Status Error:", err);
+    }
+
+    res.sendStatus(200);
+});
 
 router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }), (req, res) => {
     const event = req.body.TranscriptionEvent;

@@ -15,8 +15,6 @@ const express = require('express'),
     googleSheet = require('./routes/googleSheet'),
     sms = require('./routes/sms'),
     calls = require('./routes/calls'),
-    { verifyToken } = require('./authMiddleware'),
-    { WebSocketServer } = require('ws'),
 
     app = express(),
     server = http.createServer(app);
@@ -80,7 +78,6 @@ io.on("connection", (socket) => {
     socket.on("join-agent", (userId) => {
         socket.join(`agent:${userId}`);
         socket.agentId = userId;
-        console.log(`Agent ${userId} joined`);
     });
 
     socket.on("disconnect", () => {

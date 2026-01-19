@@ -40,6 +40,8 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
             languageCode: 'en-US',
             partialResults: true,
             enableAutomaticPunctuation: true,
+
+            intelligenceService: process.env.TWILIO_INTELLIGENCE_SERVICE_SID,
         });
 
         const dial = response.dial({
@@ -128,7 +130,7 @@ router.post("/dial-status", bodyParser.urlencoded({ extended: false }), async (r
 
     try {
         // Update DB
-        await con.query(`UPDATE CallLogs SET Status = ? WHERE CallSID = ? AND (Status IS NULL OR Status = '');`, [finalStatus, parentSid]);
+        await con.query(`UPDATE CallLogs SET Status = ? WHERE CallSID = ?;`, [finalStatus, parentSid]);
         await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?`, [finalStatus, parentSid]);
 
         // Notify frontend (same as AMD flow)
@@ -162,7 +164,35 @@ router.post("/dial-status", bodyParser.urlencoded({ extended: false }), async (r
     res.sendStatus(200);
 });
 
-router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }), (req, res) => {
+router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+    const { TranscriptionEvent, CallSid, TranscriptionData } = req.body;
+    const userID = req.query.userID;
+
+    // Only process if it's the AI Summary event
+    if (TranscriptionEvent === 'transcription-summary') {
+        const data = JSON.parse(TranscriptionData);
+        const aiSummary = data.summary; // This contains the AI generated text
+
+        try {
+            // Update your database with the AI summary
+            await con.query(`UPDATE CallLogs SET AISummary = ? WHERE CallSID = ?`, [aiSummary, CallSid]);
+
+            // Notify frontend via Socket.io if needed
+            if (global.io) {
+                global.io.to(`agent:${userID}`).emit("call-summary-ready", {
+                    callSid: CallSid,
+                    summary: aiSummary
+                });
+            }
+        } catch (err) {
+            console.error("Error saving AI Summary:", err);
+        }
+    }
+
+    res.sendStatus(200);
+});
+
+router.post("/transcription-callback-old", bodyParser.urlencoded({ extended: false }), (req, res) => {
     const event = req.body.TranscriptionEvent;
 
     if (event !== "transcription-content") {

@@ -170,4 +170,15 @@ router.get("/call-dispositions", async (req, res) => {
     }
 });
 
+router.get("/krisp-status", async (req, res) => {
+    try {
+        const [result] = await con.execute("SELECT * FROM UserSettings WHERE UserID = ? AND KrispEnabled = 1", [req.query.ID]);
+        console.log(result)
+        res.status(200).json(result);
+    } catch (error) {
+        console.error("Error fetching logs:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
 module.exports = router;

@@ -5,6 +5,9 @@ const axios = require("axios");
 const Twilio = require("twilio");
 const { con } = require("../database");
 
+const moment = require("moment-timezone");
+const nowPKT = moment.tz("Asia/Karachi").format("YYYY-MM-DD HH:mm:ss");
+
 const router = express.Router();
 const AccessToken = Twilio.jwt.AccessToken;
 const VoiceGrant = AccessToken.VoiceGrant;
@@ -54,9 +57,10 @@ router.post("/insert-call-log", bodyParser.json(), async (req, res) => {
     try {
         const { callSid, leadID, phoneNumber, isCallback, callbackID, dialedOn } = req.body;
         const dialedBy = req.user?.ID;
-        await con.query(`INSERT INTO CallLogs (Phone, CallSID, DialedBy, DialedOn) VALUES (?, ?, ?, ?)`, [normalizePhone(phoneNumber), callSid, dialedBy]);
+        await con.query(`INSERT INTO CallLogs (Phone, CallSID, DialedBy, DialedOn) VALUES (?, ?, ?, ?)`, [normalizePhone(phoneNumber), callSid, dialedBy, nowPKT]);
         return res.json({ success: true });
     } catch (err) {
+        console.log(err.message)
         res.status(500).json({ error: err.message });
     }
 });

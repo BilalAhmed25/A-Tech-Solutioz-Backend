@@ -18,15 +18,6 @@ function normalizePhone(p) {
     return String(p).replace(/\D/g, "");
 }
 
-const insertCallLog = async (phone, dialedBy, callSid, dialedOn) => {
-    try {
-        const normalized = normalizePhone(phone);
-        await con.query(`INSERT INTO CallLogs (Phone, CallSID, DialedBy, DialedOn) VALUES (?, ?, ?), ?)`, [normalized, callSid, dialedBy, dialedOn]);
-    } catch (err) {
-        console.error("Error:", err);
-    }
-};
-
 const upateCallLog = async (status = "", duration = 0, callSid, transcripts) => {
     try {
         await con.query(`UPDATE CallLogs SET Status = ?, Duration = ?, Transcripts = ? WHERE CallSID = ?`, [status, duration, JSON.stringify(transcripts), callSid]);
@@ -55,7 +46,7 @@ router.get("/token", (req, res) => {
 
 router.post("/insert-call-log", bodyParser.json(), async (req, res) => {
     try {
-        const { callSid, leadID, phoneNumber, isCallback, callbackID, dialedOn } = req.body;
+        const { callSid, phoneNumber } = req.body;
         const dialedBy = req.user?.ID;
         await con.query(`INSERT INTO CallLogs (Phone, CallSID, DialedBy, DialedOn) VALUES (?, ?, ?, ?)`, [normalizePhone(phoneNumber), callSid, dialedBy, nowPKT]);
         return res.json({ success: true });

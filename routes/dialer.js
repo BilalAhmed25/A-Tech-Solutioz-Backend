@@ -15,10 +15,10 @@ function normalizePhone(p) {
     return String(p).replace(/\D/g, "");
 }
 
-const insertCallLog = async (phone, dialedBy, callSid) => {
+const insertCallLog = async (phone, dialedBy, callSid, dialedOn) => {
     try {
         const normalized = normalizePhone(phone);
-        await con.query(`INSERT INTO CallLogs (Phone, CallSID, DialedBy) VALUES (?, ?, ?)`, [normalized, callSid, dialedBy]);
+        await con.query(`INSERT INTO CallLogs (Phone, CallSID, DialedBy, DialedOn) VALUES (?, ?, ?), ?)`, [normalized, callSid, dialedBy, dialedOn]);
     } catch (err) {
         console.error("Error:", err);
     }
@@ -52,12 +52,11 @@ router.get("/token", (req, res) => {
 
 router.post("/insert-call-log", bodyParser.json(), async (req, res) => {
     try {
-        const { callSid, leadID, phoneNumber, isCallback, callbackID } = req.body;
+        const { callSid, leadID, phoneNumber, isCallback, callbackID, dialedOn } = req.body;
         const dialedBy = req.user?.ID;
-        await con.query(`INSERT INTO CallLogs (Phone, CallSID, DialedBy) VALUES (?, ?, ?)`, [normalizePhone(phoneNumber), callSid, dialedBy]);
+        await con.query(`INSERT INTO CallLogs (Phone, CallSID, DialedBy, DialedOn) VALUES (?, ?, ?, ?)`, [normalizePhone(phoneNumber), callSid, dialedBy]);
         return res.json({ success: true });
     } catch (err) {
-        console.error("attach-callsid error:", err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -169,15 +168,14 @@ router.get("/next", async (req, res) => {
 
 router.post("/attach-callsid", bodyParser.json(), async (req, res) => {
     try {
-        const { id, callSid, phoneNumber } = req.body;
+        const { id, callSid, phoneNumber, dialedOn } = req.body;
         const dialedBy = req.user?.ID;
         if (id) {
             await con.query(`UPDATE DialingData SET CallSID = ? WHERE LeadID = ? AND DialedBy = ?;`, [callSid, id, dialedBy]);
         }
-        await insertCallLog(phoneNumber, dialedBy, callSid);
+        // await insertCallLog(phoneNumber, dialedBy, callSid, dialedOn);
         return res.json({ success: true });
     } catch (err) {
-        console.error("attach-callsid error:", err);
         res.status(500).json({ error: err.message });
     }
 });

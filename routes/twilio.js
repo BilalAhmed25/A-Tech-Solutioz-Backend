@@ -71,7 +71,7 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
 });
 
 router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
-    const { parentSid, userID } = req.query;
+    const { parentSid } = req.query;
     const { AnsweredBy } = req.body;
 
     if (AnsweredBy !== "human") {
@@ -82,12 +82,12 @@ router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (re
             await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?`, [reportStatus, parentSid]);
 
             // 1. TELL FRONTEND TO DISCONNECT FIRST
-            if (global.io) {
-                global.io.to(`agent:${userID}`).emit("auto-disposition-trigger", {
-                    status: reportStatus,
-                    callSid: parentSid
-                });
-            }
+            // if (global.io) {
+            //     global.io.to(`agent:${userID}`).emit("auto-disposition-trigger", {
+            //         status: reportStatus,
+            //         callSid: parentSid
+            //     });
+            // }
 
             // 2. HANG UP TWILIO CALL
             const twilioClient = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
@@ -192,46 +192,30 @@ router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }
     res.sendStatus(200);
 });
 
-router.post("/transcription-callback-old", bodyParser.urlencoded({ extended: false }), (req, res) => {
-    const event = req.body.TranscriptionEvent;
+router.post("/transcription-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+    const { CallSid, TranscriptionText, TranscriptionStatus } = req.body;
 
-    if (event !== "transcription-content") {
-        return res.sendStatus(200);
+    if (TranscriptionStatus === "completed" && TranscriptionText) {
+        try {
+            await con.query(`UPDATE CallLogs SET Transcript = ? WHERE CallSID = ?`, [TranscriptionText, CallSid]);
+            res.sendStatus(200);
+        } catch (err) {
+            console.error("Transcript save error:", err);
+            res.sendStatus(500);
+        }
+    } else {
+        res.sendStatus(200);
     }
-
-    const transcriptData = req.body.TranscriptionData
-        ? JSON.parse(req.body.TranscriptionData)
-        : null;
-
-    if (!transcriptData) return res.sendStatus(200);
-
-    const callSid = req.body.CallSid;
-    const userID = req.query.userID;
-
-    const track = req.body.Track || 'inbound_track';
-    const final = req.body.Final === "true";
-    const transcript = transcriptData.transcript;
-
-    if (!callSid || !userID) return res.sendStatus(200);
-
-    global.io.to(`agent:${userID}`).emit("transcript", {
-        track,
-        transcript,
-        final,
-        callSid
-    });
-
-    res.sendStatus(200);
-});
-
+}
+);
 
 router.post("/recording-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
-    const { CallSid, RecordingUrl, RecordingSid, RecordingStatus } = req.body;
+    const { CallSid, RecordingUrl, RecordingSid, RecordingStatus, RecordingDuration } = req.body;
     if (RecordingStatus === 'completed' && RecordingUrl) {
         try {
             await con.query(
-                `UPDATE CallLogs SET RecordingUrl = ?, RecordingSid = ? WHERE CallSID = ?`,
-                [RecordingUrl, RecordingSid, CallSid]
+                `UPDATE CallLogs SET RecordingUrl = ?, RecordingSid = ?, Duration = ? WHERE CallSID = ?`,
+                [RecordingUrl, RecordingSid, RecordingDuration, CallSid]
             );
             res.sendStatus(200);
         } catch (err) {

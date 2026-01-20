@@ -18,9 +18,9 @@ function normalizePhone(p) {
     return String(p).replace(/\D/g, "");
 }
 
-const upateCallLog = async (status = "", duration = 0, callSid, transcripts) => {
+const upateCallLog = async (status = "", callSid, transcripts) => {
     try {
-        await con.query(`UPDATE CallLogs SET Status = ?, Duration = ?, Transcripts = ? WHERE CallSID = ?`, [status, duration, JSON.stringify(transcripts), callSid]);
+        await con.query(`UPDATE CallLogs SET Status = ?, Transcripts = ? WHERE CallSID = ?`, [status, JSON.stringify(transcripts), callSid]);
     } catch (err) {
         console.error("Error:", err);
     }
@@ -56,24 +56,24 @@ router.post("/insert-call-log", bodyParser.json(), async (req, res) => {
     }
 });
 
-router.post("/auto-end", bodyParser.json(), async (req, res) => {
-    try {
-        const { callSid, duration, transcripts } = req.body;
-        if (!callSid) {
-            return res.status(400).json({ error: "callSid is required" });
-        }
+// router.post("/auto-end", bodyParser.json(), async (req, res) => {
+//     try {
+//         const { callSid, duration, transcripts } = req.body;
+//         if (!callSid) {
+//             return res.status(400).json({ error: "callSid is required" });
+//         }
 
-        await con.query(`UPDATE CallLogs SET Duration = ?, Transcripts = ? WHERE CallSID = ?`, [duration, JSON.stringify(transcripts), callSid]);
-        return res.json({ success: true });
-    } catch (err) {
-        console.error("POST /auto-end error:", err);
-        res.status(500).json({ error: err.message });
-    }
-});
+//         await con.query(`UPDATE CallLogs SET Duration = ?, Transcripts = ? WHERE CallSID = ?`, [duration, JSON.stringify(transcripts), callSid]);
+//         return res.json({ success: true });
+//     } catch (err) {
+//         console.error("POST /auto-end error:", err);
+//         res.status(500).json({ error: err.message });
+//     }
+// });
 
 router.post("/end", bodyParser.json(), async (req, res) => {
     try {
-        const { callSid, disposition, duration, callbackDateTime, callbackComments, transcripts, isCallback, callbackID } = req.body;
+        const { callSid, disposition, callbackDateTime, callbackComments, transcripts, isCallback, callbackID } = req.body;
 
         if (!callSid || !disposition) {
             return res.status(400).json({ error: "callSid and disposition are required" });
@@ -84,8 +84,7 @@ router.post("/end", bodyParser.json(), async (req, res) => {
 
         if (callbackDispositions.includes(disposition)) {
             await con.query(
-                `INSERT INTO Callbacks (UserID, CallSID, Status, DateTime, Comments)
-                 VALUES (?, ?, ?, ?, ?)`,
+                `INSERT INTO Callbacks (UserID, CallSID, Status, DateTime, Comments) VALUES (?, ?, ?, ?, ?)`,
                 [req.user.ID, callSid, disposition, callbackDateTime, callbackComments]
             );
         }
@@ -112,7 +111,7 @@ router.post("/end", bodyParser.json(), async (req, res) => {
         await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?`, [disposition, callSid]);
 
         // 4️⃣ Update call log
-        await upateCallLog(disposition, duration, callSid, transcripts || null);
+        await upateCallLog(disposition, callSid, transcripts || null);
 
         return res.json({ success: true });
     } catch (err) {

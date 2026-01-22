@@ -46,6 +46,7 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
 
         const dial = response.dial({
             callerId: TWILIO_NUMBER,
+            action: `${BASE_URL_FOR_TWILIO_CALLBACKS}/dial-action?parentSid=${parentCallSid}`,
             timeout: 16,
             record: 'record-from-answer',
             recordingStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/recording-status`,
@@ -70,6 +71,27 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), (req, 
     }
 });
 
+router.post("/dial-action", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+    const { DialCallStatus } = req.body;
+    const { parentSid } = req.query; // This is the SID in your CallLogs table
+
+    let finalStatus = "Voicemail";
+    if (DialCallStatus === "no-answer") finalStatus = "No answer";
+    if (DialCallStatus === "busy") finalStatus = "Busy";
+    if (DialCallStatus === "failed") finalStatus = "Number not in service";
+
+    try {
+        // Force the update here because we know this is a specific event
+        await con.query(`UPDATE CallLogs SET Status = ? WHERE CallSID = ?`, [finalStatus, parentSid]);
+    } catch (err) {
+        console.error("Dial Action Error:", err);
+    }
+
+    const response = new Twilio.twiml.VoiceResponse();
+    response.hangup();
+    res.type("text/xml").send(response.toString());
+});
+
 router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
     const { parentSid } = req.query;
     const { AnsweredBy } = req.body;
@@ -78,8 +100,8 @@ router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (re
         const reportStatus = AnsweredBy === "fax" ? "Number not in service" : "Voicemail";
 
         try {
-            await con.query(`UPDATE CallLogs SET Status = ? WHERE CallSID = ? AND (Status IS NULL OR Status = '');`, [reportStatus, parentSid]);
-            await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?`, [reportStatus, parentSid]);
+            await con.query(`UPDATE CallLogs SET Status = ? WHERE CallSID = ?;`, [reportStatus, parentSid]);
+            await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?;`, [reportStatus, parentSid]);
 
             // 1. TELL FRONTEND TO DISCONNECT FIRST
             // if (global.io) {
@@ -226,17 +248,41 @@ router.post("/recording-status", bodyParser.urlencoded({ extended: false }), asy
 });
 
 router.post("/call-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
-    const { CallSid, CallSID, CallStatus, To, From, CallDuration, RecordingUrl, Direction } = req.body;
-    const dialedByFromUrl = req.query.dialedBy;
-    const callSid = CallSid || CallSID || null;
-    const status = String(CallStatus || "").toLowerCase();
+    const { CallSid, CallStatus } = req.body;
+
+    let dbStatus = CallStatus.toLowerCase();
+
+    // Standardize naming
+    if (dbStatus === 'no-answer' || dbStatus === 'canceled') {
+        dbStatus = 'No answer';
+    } else if (dbStatus === 'busy') {
+        dbStatus = 'Busy';
+    } else if (dbStatus === 'completed') {
+        dbStatus = 'Completed';
+    }
 
     try {
-        if (Direction === 'outbound-dial') {
-            await insertCallLog(To, status, dialedByFromUrl, callSid, CallDuration ? Number(CallDuration) : null, RecordingUrl || null);
+        /**
+         * THE LOGIC: 
+         * Only allow the update to 'Completed' if the current status is still 'ringing' or 'in-progress'.
+         * If /dial-action already set the status to 'No answer', 'Busy', or 'Voicemail', 
+         * the WHERE clause will fail, and it won't overwrite your accurate data.
+         */
+        let query = `
+            UPDATE CallLogs 
+            SET Status = ? 
+            WHERE CallSID = ? 
+        `;
+
+        if (dbStatus === 'Completed') {
+            // Protect "No answer", "Voicemail", and "Busy" from being overwritten
+            query += ` AND (Status NOT IN ('No answer', 'Voicemail', 'Busy', 'Number not in service') OR Status IS NULL OR Status = '')`;
         }
+
+        await con.query(query, [dbStatus, CallSid]);
+
     } catch (err) {
-        console.error("Error:", err);
+        console.error("Error updating final status:", err);
     }
     res.sendStatus(200);
 });

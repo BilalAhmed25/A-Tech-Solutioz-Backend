@@ -200,7 +200,6 @@ router.post("/dial-status", bodyParser.urlencoded({ extended: false }), async (r
     res.sendStatus(200);
 });
 
-
 router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }), (req, res) => {
     const event = req.body.TranscriptionEvent;
 
@@ -232,5 +231,20 @@ router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }
 
     res.sendStatus(200);
 });
+
+router.get("/balance", async (req, res) => {
+    try {
+        const balance = await client.balance.fetch();
+        return res.status(200).json({
+            balance: Number(balance.balance),
+            currency: balance.currency,
+            accountSid: balance.accountSid
+        });
+
+    } catch (error) {
+        return res.status(500).json("Unable to fetch Twilio balance");
+    }
+});
+
 
 module.exports = router;

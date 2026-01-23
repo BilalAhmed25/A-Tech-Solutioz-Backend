@@ -12,6 +12,7 @@ const client = Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 const moment = require("moment-timezone");
 const nowPKT = moment.tz("Asia/Karachi").format("YYYY-MM-DD HH:mm:ss");
+const nowUTC = moment.utc().format("YYYY-MM-DD HH:mm:ss");
 
 // --- Insert call log ---
 const insertCallLog = async (phone, status, dialedBy, callSid, duration = 0, recordingUrl = null) => {
@@ -19,7 +20,7 @@ const insertCallLog = async (phone, status, dialedBy, callSid, duration = 0, rec
         await con.query(
             `INSERT INTO CallLogs (Phone, CallSID, Status, DialedBy, DialedOn, Duration, RecordingUrl) VALUES (?, ?, ?, ?, ?, ?, ?) 
              ON DUPLICATE KEY UPDATE Status = VALUES(Status)`,
-            [phone, callSid, status, dialedBy, nowPKT, Number(duration), recordingUrl]
+            [phone, callSid, status, dialedBy, nowUTC, Number(duration), recordingUrl]
         );
     } catch (err) {
         console.error("DB Insert Error:", err);

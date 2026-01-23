@@ -1,7 +1,6 @@
 require("dotenv").config();
 const express = require("express");
 const { con } = require("../database");
-
 const router = express.Router();
 
 router.get("/logs", async (req, res) => {
@@ -18,7 +17,7 @@ router.get("/logs", async (req, res) => {
             CallLogs.AISummary,
             CallLogs.Status,
             CallLogs.Duration,
-            CallLogs.DialedOn,
+            DATE_FORMAT(CallLogs.DialedOn, '%Y-%m-%d %H:%i:%s') AS DialedOn,
             UserDetails.ID,
             UserDetails.Name,
             UserDetails.Email,

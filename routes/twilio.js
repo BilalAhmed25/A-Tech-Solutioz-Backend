@@ -56,9 +56,12 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async 
     const { To, userID, CallSid } = req.body;
     const response = new VoiceResponse();
 
-    if (!To) {
-        response.say("Invalid number provided.");
-        return res.type("text/xml").send(response.toString());
+    const e164Regex = /^\+[1-9]\d{7,14}$/;
+    if (!To || !e164Regex.test(To)) {
+        await insertCallLog(To, "Invalid number", userID, CallSid);
+        const r = new VoiceResponse();
+        r.say("Invalid phone number is dialed.");
+        return res.type("text/xml").send(r.toString());
     }
 
     // Insert initial log
@@ -82,7 +85,7 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async 
             record: 'record-from-answer',
             statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/dial-status?parentSid=${CallSid}&userID=${userID}`,
             statusCallbackMethod: 'POST',
-            statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'canceled']
+            statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'canceled', 'failed']
         });
 
         // Dial the number with AMD
@@ -95,7 +98,6 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async 
 
         res.type("text/xml").send(response.toString());
     } catch (err) {
-        console.error("Voice Handler Error:", err);
         await updateCallStatus(CallSid, "Failed");
         const failResponse = new VoiceResponse();
         failResponse.say("We are unable to process your call.");
@@ -107,7 +109,6 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async 
 router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
     const { parentSid, userID } = req.query;
     const { AnsweredBy } = req.body;
-
     if (["machine_start", "machine_end_beep", "machine_end_silence", "fax"].includes(AnsweredBy)) {
         const status = (AnsweredBy === "fax") ? "Number not in service" : "Voicemail";
 
@@ -131,20 +132,42 @@ router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (re
 
 // 3. DIAL STATUS
 router.post("/dial-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
-    const { CallStatus, CallDuration, ErrorCode } = req.body;
-    const { parentSid, userID } = req.query;
+    const { CallStatus, CallDuration, ErrorCode, CallSid } = req.body;
+    let { parentSid, userID } = req.query;
+    // fallback if query params are missing
+    parentSid = parentSid || CallSid;
+    if (!parentSid) {
+        console.warn("Missing parentSid/CallSid in dial-status webhook", req.body, req.query);
+        return res.sendStatus(400);
+    }
 
-    let finalStatus = null;
+    userID = userID || "unknown"; // fallback, prevent crash
+
     const duration = parseInt(CallDuration || '0', 10);
 
-    const invalidCodes = ['13223', '13224', '21214', '21217', '30005'];
+    const errorCodeMap = {
+        '21210': 'Invalid Number',
+        '21401': 'Invalid Number',
+        '13223': 'Invalid Number',
+        '13224': 'Invalid Number',
+        '21211': 'Invalid Number',
+        '21212': 'Number not in service',
+        '21214': 'Number not in service',
+        '21217': 'Number not in service',
+        '30005': 'Number not in service'
+    };
 
-    if (invalidCodes.includes(ErrorCode)) {
-        finalStatus = "Invalid Number";
-    } else {
-        switch (CallStatus) {
+    let finalStatus = "Failed"; // default fallback
+
+    if (ErrorCode && errorCodeMap[ErrorCode]) {
+        finalStatus = errorCodeMap[ErrorCode];
+    } else if (CallStatus) {
+        switch (CallStatus.toLowerCase()) {
+            case "failed":
+                finalStatus = "Number not in service";
+                break;
             case "canceled":
-                finalStatus = duration <= 2 ? "Hangup" : null;
+                finalStatus = duration <= 2 ? "Hangup" : "Canceled";
                 break;
             case "busy":
                 finalStatus = "Busy";
@@ -152,29 +175,31 @@ router.post("/dial-status", bodyParser.urlencoded({ extended: false }), async (r
             case "no-answer":
                 finalStatus = "No answer";
                 break;
-            case "failed":
-                finalStatus = "Number not in service";
-                break;
             case "completed":
-                if (duration <= 2) finalStatus = "Hangup"; // Very short human calls
-                // If >2s, frontend will manage
+                finalStatus = duration <= 2 ? "Hangup" : "Completed";
                 break;
             case "answered":
             case "in-progress":
-                // Already logged via AMD or will be handled manually
+                finalStatus = "Answered";
                 break;
+            default:
+                finalStatus = "Failed";
         }
     }
 
-    if (finalStatus) {
-        await updateCallStatus(parentSid, finalStatus);
-        if (global.io) {
-            global.io.to(`agent:${userID}`).emit("auto-disposition-trigger", { status: finalStatus, callSid: parentSid });
-        }
+    // Always update DB
+    await updateCallStatus(parentSid, finalStatus, duration);
+
+    // Always emit status to frontend
+    if (global.io) {
+        global.io.to(`agent:${userID}`).emit("auto-disposition-trigger", { status: finalStatus, callSid: parentSid });
     }
+
+    console.log("Dial-status processed:", { parentSid, userID, finalStatus, CallStatus, ErrorCode, CallSid });
 
     res.sendStatus(200);
 });
+
 
 router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }), (req, res) => {
     const event = req.body.TranscriptionEvent;

@@ -44,33 +44,6 @@ router.get("/token", (req, res) => {
     }
 });
 
-router.post("/insert-call-log", bodyParser.json(), async (req, res) => {
-    try {
-        const { callSid, phoneNumber } = req.body;
-        const dialedBy = req.user?.ID;
-        await con.query(`INSERT INTO CallLogs (Phone, CallSID, DialedBy, DialedOn) VALUES (?, ?, ?, ?)`, [normalizePhone(phoneNumber), callSid, dialedBy, nowPKT]);
-        return res.json({ success: true });
-    } catch (err) {
-        console.log(err.message)
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// router.post("/auto-end", bodyParser.json(), async (req, res) => {
-//     try {
-//         const { callSid, duration, transcripts } = req.body;
-//         if (!callSid) {
-//             return res.status(400).json({ error: "callSid is required" });
-//         }
-
-//         await con.query(`UPDATE CallLogs SET Duration = ?, Transcripts = ? WHERE CallSID = ?`, [duration, JSON.stringify(transcripts), callSid]);
-//         return res.json({ success: true });
-//     } catch (err) {
-//         console.error("POST /auto-end error:", err);
-//         res.status(500).json({ error: err.message });
-//     }
-// });
-
 router.post("/end", bodyParser.json(), async (req, res) => {
     try {
         const { callSid, disposition, callbackDateTime, callbackComments, transcripts, isCallback, callbackID } = req.body;
@@ -160,20 +133,6 @@ router.get("/next", async (req, res) => {
     }
 });
 
-router.post("/attach-callsid", bodyParser.json(), async (req, res) => {
-    try {
-        const { id, callSid, phoneNumber, dialedOn } = req.body;
-        const dialedBy = req.user?.ID;
-        if (id) {
-            await con.query(`UPDATE DialingData SET CallSID = ? WHERE LeadID = ? AND DialedBy = ?;`, [callSid, id, dialedBy]);
-        }
-        // await insertCallLog(phoneNumber, dialedBy, callSid, dialedOn);
-        return res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
 router.get("/recording", async (req, res) => {
     const { recordingURL } = req.query;
     try {
@@ -194,20 +153,61 @@ router.get("/recording", async (req, res) => {
     }
 });
 
-router.get("/get-call-status", async (req, res) => {
-    const { callSid } = req.query;
-    try {
-        // Look up the status we just wrote in /amd-status
-        const [rows] = await con.query(`SELECT Status FROM CallLogs WHERE CallSID = ? LIMIT 1`, [callSid]);
+// router.get("/get-call-status", async (req, res) => {
+//     const { callSid } = req.query;
+//     try {
+//         // Look up the status we just wrote in /amd-status
+//         const [rows] = await con.query(`SELECT Status FROM CallLogs WHERE CallSID = ? LIMIT 1`, [callSid]);
 
-        if (rows.length > 0) {
-            res.json({ status: rows[0].Status });
-        } else {
-            res.json({ status: "in-progress" });
-        }
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
+//         if (rows.length > 0) {
+//             res.json({ status: rows[0].Status });
+//         } else {
+//             res.json({ status: "in-progress" });
+//         }
+//     } catch (err) {
+//         res.status(500).json({ error: err.message });
+//     }
+// });
+
+// router.post("/insert-call-log", bodyParser.json(), async (req, res) => {
+//     try {
+//         const { callSid, phoneNumber } = req.body;
+//         const dialedBy = req.user?.ID;
+//         await con.query(`INSERT INTO CallLogs (Phone, CallSID, DialedBy, DialedOn) VALUES (?, ?, ?, ?)`, [normalizePhone(phoneNumber), callSid, dialedBy, nowPKT]);
+//         return res.json({ success: true });
+//     } catch (err) {
+//         console.log(err.message)
+//         res.status(500).json({ error: err.message });
+//     }
+// });
+
+// router.post("/auto-end", bodyParser.json(), async (req, res) => {
+//     try {
+//         const { callSid, duration, transcripts } = req.body;
+//         if (!callSid) {
+//             return res.status(400).json({ error: "callSid is required" });
+//         }
+
+//         await con.query(`UPDATE CallLogs SET Duration = ?, Transcripts = ? WHERE CallSID = ?`, [duration, JSON.stringify(transcripts), callSid]);
+//         return res.json({ success: true });
+//     } catch (err) {
+//         console.error("POST /auto-end error:", err);
+//         res.status(500).json({ error: err.message });
+//     }
+// });
+
+// router.post("/attach-callsid", bodyParser.json(), async (req, res) => {
+//     try {
+//         const { id, callSid, phoneNumber, dialedOn } = req.body;
+//         const dialedBy = req.user?.ID;
+//         if (id) {
+//             await con.query(`UPDATE DialingData SET CallSID = ? WHERE LeadID = ? AND DialedBy = ?;`, [callSid, id, dialedBy]);
+//         }
+//         // await insertCallLog(phoneNumber, dialedBy, callSid, dialedOn);
+//         return res.json({ success: true });
+//     } catch (err) {
+//         res.status(500).json({ error: err.message });
+//     }
+// });
 
 module.exports = router;

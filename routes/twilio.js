@@ -66,7 +66,7 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async 
     }
 
     // Insert initial log
-    await insertCallLog(To, "Dialing", userID, CallSid);
+    await insertCallLog(To, "No answer", userID, CallSid);
 
     try {
         // Real-time transcription

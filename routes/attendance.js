@@ -6,7 +6,7 @@ const moment = require('moment');
 // -------------------- Helper Functions --------------------
 
 // Centralized logic to calculate all metrics for a specific day
-function calculateDailyMetrics(checkIn, checkOut, shiftStartStr, shiftEndStr, requiredHours, dayDate) {
+function calculateDailyMetricsOld(checkIn, checkOut, shiftStartStr, shiftEndStr, requiredHours, dayDate) {
     // Defaults
     let lateMinutes = 0;
     let leftEarlyMinutes = 0;
@@ -102,10 +102,67 @@ function calculateDailyMetrics(checkIn, checkOut, shiftStartStr, shiftEndStr, re
     return { lateMinutes, leftEarlyMinutes, extraMinutes, workingMinutes, status, isPaid: false };
 }
 
+function calculateDailyMetrics(checkIn, checkOut, shiftStartStr, shiftEndStr, requiredHours, dayDate, isHourlyEmployee = false) {
+    // Defaults
+    let lateMinutes = 0;
+    let leftEarlyMinutes = 0;
+    let extraMinutes = 0;
+    let workingMinutes = 0;
+    let status = 'Absent';
+
+    if (checkIn) {
+        status = 'Present';
+        if (!checkOut) status = 'Left without checkout';
+    }
+
+    if (!shiftStartStr || !shiftEndStr) {
+        if (checkIn && checkOut) {
+            workingMinutes = moment(checkOut).diff(moment(checkIn), 'minutes');
+        }
+        return { lateMinutes, leftEarlyMinutes, extraMinutes, workingMinutes, status };
+    }
+
+    const shiftStartMoment = moment(`${dayDate} ${shiftStartStr}`, 'YYYY-MM-DD HH:mm:ss', true);
+    let shiftEndMoment = moment(`${dayDate} ${shiftEndStr}`, 'YYYY-MM-DD HH:mm:ss', true);
+
+    if (shiftEndMoment.isBefore(shiftStartMoment)) {
+        shiftEndMoment.add(1, 'day');
+    }
+
+    const inMoment = checkIn ? moment(checkIn) : null;
+    const outMoment = checkOut ? moment(checkOut) : null;
+
+    if (inMoment && outMoment) {
+        let calcOut = outMoment.clone();
+        if (calcOut.isBefore(inMoment)) calcOut.add(1, 'day');
+        workingMinutes = calcOut.diff(inMoment, 'minutes');
+    }
+
+    // ⚡ Late calculation based on actual IsHourlyEmployee
+    if (!isHourlyEmployee && inMoment && inMoment.isAfter(shiftStartMoment)) {
+        const lateDiff = inMoment.diff(shiftStartMoment, 'minutes');
+        lateMinutes = lateDiff > 15 ? lateDiff : 0;
+    }
+
+    const requiredMinutes = requiredHours ? requiredHours * 60 : 9 * 60;
+
+    if (workingMinutes > 0 && workingMinutes < requiredMinutes) {
+        leftEarlyMinutes = requiredMinutes - workingMinutes;
+    }
+
+    if (workingMinutes > 0) {
+        const baseMinutes = requiredHours ? requiredHours * 60 : 9 * 60;
+        extraMinutes = workingMinutes - baseMinutes;
+        if (extraMinutes < 0) extraMinutes = 0;
+    }
+
+    return { lateMinutes, leftEarlyMinutes, extraMinutes, workingMinutes, status, isPaid: false };
+}
+
 // Fetch shift info for a user
 async function getUserShift(userID, day) {
     const [rows] = await con.execute(`
-        SELECT sd.StartTime, sd.EndTime
+        SELECT sd.StartTime, sd.EndTime, usa.IsHourlyEmloyee
         FROM UserShiftAssignments usa
         JOIN ShiftDurations sd ON usa.ShiftID = sd.ShiftID
         WHERE usa.UserID = ?
@@ -238,6 +295,7 @@ router.get('/day', async (req, res) => {
         const results = [];
         for (const user of users) {
             const shift = await getUserShift(user.UserID, day);
+            const isHourlyEmployee = shift?.IsHourlyEmloyee === 1;
             const shiftStart = shift?.StartTime;
             const shiftEnd = shift?.EndTime;
 
@@ -250,7 +308,7 @@ router.get('/day', async (req, res) => {
             }
 
             const requiredHours = await getHourlyRequiredHours(user.UserID);
-            let metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
+            let metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day, isHourlyEmployee);
 
             // Calculate all metrics using the new logic
             const leave = await getApprovedLeave(user.UserID, day);
@@ -341,6 +399,7 @@ router.get('/user', async (req, res) => {
             const weekday = curDate.day(); // 0 = Sunday, 6 = Saturday
 
             const shift = await getUserShift(user.UserID, day);
+            const isHourlyEmployee = shift?.IsHourlyEmloyee === 1;
             const shiftStart = shift?.StartTime;
             const shiftEnd = shift?.EndTime;
 
@@ -352,7 +411,7 @@ router.get('/user', async (req, res) => {
             }
 
             // Calculate metrics
-            let metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day);
+            let metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day, isHourlyEmployee);
 
             // Apply leave & holiday rules
             const leave = leaveMap[day] || null;
@@ -526,14 +585,7 @@ router.get('/range-with-salary', async (req, res) => {
                     checkOut = io.checkOut;
                 }
 
-                let metrics = calculateDailyMetrics(
-                    checkIn,
-                    checkOut,
-                    shiftStart,
-                    shiftEnd,
-                    requiredHours,
-                    day
-                );
+                let metrics = calculateDailyMetrics(checkIn, checkOut, shiftStart, shiftEnd, requiredHours, day, isHourlyEmployee);
 
                 const leave = leaveMap[`${user.UserID}_${day}`] || null;
                 const holiday = holidayMap[day] || null;

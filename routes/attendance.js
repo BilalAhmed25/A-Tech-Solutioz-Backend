@@ -575,6 +575,7 @@ router.get('/range-with-salary', async (req, res) => {
                 const weekday = curDate.day();
 
                 const shift = await getShiftCached(user.UserID, day);
+                const isHourlyEmployee = shift?.IsHourlyEmloyee === 1;
                 const shiftStart = shift?.StartTime;
                 const shiftEnd = shift?.EndTime;
 

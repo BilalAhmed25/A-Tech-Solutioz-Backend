@@ -22,29 +22,19 @@ const insertCallLog = async (phone, status, dialedBy, callSid, duration = 0, rec
              ON DUPLICATE KEY UPDATE Status = VALUES(Status)`,
             [phone, callSid, status, dialedBy, nowUTC, Number(duration), recordingUrl]
         );
+        await con.query(`UPDATE DialingData SET Status = ?, CallSID = ? WHERE CallSID IS NULL AND Phone = ?`, [status, callSid, phone]);
     } catch (err) {
         console.error("DB Insert Error:", err);
     }
 };
 
 // --- Update call status safely ---
-const updateCallStatus = async (callSid, status, duration = null) => {
+const updateCallStatus = async (callSid, status) => {
     try {
-        let query = `UPDATE CallLogs SET Status = ?`;
-        const params = [status];
-
-        if (duration !== null) {
-            query += `, Duration = ?`;
-            params.push(duration);
-        }
-
-        query += ` WHERE CallSID = ?`;
-        params.push(callSid);
-
-        await con.query(query, params);
-
-        // Optional: update secondary table if exists
+        let query = `UPDATE CallLogs SET Status = ? WHERE CallSID = ?`;
+        const params = [status, callSid];
         try {
+            await con.query(query, params);
             await con.query(`UPDATE DialingData SET Status = ? WHERE CallSID = ?`, [status, callSid]);
         } catch (e) { }
     } catch (err) {
@@ -100,7 +90,6 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async 
 
         res.type("text/xml").send(response.toString());
     } catch (err) {
-        // await updateCallStatus(CallSid, "Failed");
         await insertCallLog(To, "Failed", userID, CallSid);
         const failResponse = new VoiceResponse();
         failResponse.say("We are unable to process your call.");
@@ -194,7 +183,7 @@ router.post("/dial-status", bodyParser.urlencoded({ extended: false }), async (r
     }
 
     // Always update DB
-    await updateCallStatus(parentSid, finalStatus, duration);
+    await updateCallStatus(parentSid, finalStatus);
 
     // Always emit status to frontend
     if (global.io) {

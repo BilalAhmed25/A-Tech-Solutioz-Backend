@@ -21,9 +21,15 @@ router.get("/logs", async (req, res) => {
             UserDetails.ID,
             UserDetails.Name,
             UserDetails.Email,
-            UserDetails.ProfilePicture
+            UserDetails.ProfilePicture,
+            DialingData.Name AS LeadName,
+            DialingData.Email,
+            DialingData.LeadType,
+            DialingData.Budget,
+            DialingData.Comments
         FROM CallLogs
         JOIN UserDetails ON CallLogs.DialedBy = UserDetails.ID
+        LEFT JOIN DialingData ON CallLogs.CallSID = DialingData.CallSID
     `;
 
     let params = [];
@@ -56,10 +62,15 @@ router.get("/logs", async (req, res) => {
                 UserDetails.ID,
                 UserDetails.Name,
                 UserDetails.Email,
-                UserDetails.ProfilePicture
+                UserDetails.ProfilePicture,
+                DialingData.Name AS LeadName,
+                DialingData.Email,
+                DialingData.LeadType,
+                DialingData.Budget,
+                DialingData.Comments
             FROM CallLogs
             JOIN UserDetails ON CallLogs.DialedBy = UserDetails.ID
-            JOIN DialingData ON DialingData.CallSID = CallLogs.CallSID
+            LEFT JOIN DialingData ON DialingData.CallSID = CallLogs.CallSID
             WHERE DialingData.FileID = ?
             ORDER BY CallLogs.ID DESC
         `;
@@ -79,7 +90,6 @@ router.get("/logs", async (req, res) => {
         const [result] = await con.execute(query, params);
         res.status(200).json(result);
     } catch (error) {
-        console.error("Error fetching logs:", error);
         res.status(500).json({ error: "Internal server error" });
     }
 });

@@ -22,7 +22,6 @@ const insertCallLog = async (phone, status, dialedBy, callSid, duration = 0, rec
              ON DUPLICATE KEY UPDATE Status = VALUES(Status)`,
             [phone, callSid, status, dialedBy, nowUTC, Number(duration), recordingUrl]
         );
-        await con.query(`UPDATE DialingData SET Status = ?, CallSID = ? WHERE CallSID IS NULL AND Phone = ?`, [status, callSid, phone]);
     } catch (err) {
         console.error("DB Insert Error:", err);
     }

@@ -153,6 +153,21 @@ router.get("/recording", async (req, res) => {
     }
 });
 
+router.post("/update-dialing-data", bodyParser.json(), async (req, res) => {
+    try {
+        const { callSid, leadID, isCallback } = req.body;
+        const dialedBy = req.user?.ID;
+        
+        if (isCallback) return res.json({ success: true });
+
+        await con.query(`UPDATE DialingData SET CallSID = ? WHERE DialedBy = ? AND LeadID = ?;`, [callSid, dialedBy, leadID]);
+        return res.json({ success: true });
+    } catch (err) {
+        console.log(err.message)
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // router.get("/get-call-status", async (req, res) => {
 //     const { callSid } = req.query;
 //     try {

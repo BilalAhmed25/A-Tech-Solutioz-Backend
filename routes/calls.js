@@ -23,7 +23,7 @@ router.get("/logs", async (req, res) => {
             UserDetails.Email,
             UserDetails.ProfilePicture,
             DialingData.Name AS LeadName,
-            DialingData.Email,
+            DialingData.Email AS ClientEmail,
             DialingData.LeadType,
             DialingData.Budget,
             DialingData.Comments

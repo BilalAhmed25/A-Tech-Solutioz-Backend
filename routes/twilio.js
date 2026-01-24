@@ -65,10 +65,8 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async 
         return res.type("text/xml").send(r.toString());
     }
 
-    // Insert initial log
-    await insertCallLog(To, "No answer", userID, CallSid);
-
     try {
+        await insertCallLog(To, "No answer", userID, CallSid);
         // Real-time transcription
         const start = response.start();
         start.transcription({
@@ -84,6 +82,9 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async 
             callerId: TWILIO_NUMBER,
             timeout: 20, // Call will ring for 20s
             record: 'record-from-answer',
+            recordingStatusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/recording-status`,
+            // answerOnBridge: true,
+
             statusCallback: `${BASE_URL_FOR_TWILIO_CALLBACKS}/dial-status?parentSid=${CallSid}&userID=${userID}`,
             statusCallbackMethod: 'POST',
             statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'canceled', 'failed']
@@ -99,7 +100,8 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async 
 
         res.type("text/xml").send(response.toString());
     } catch (err) {
-        await updateCallStatus(CallSid, "Failed");
+        // await updateCallStatus(CallSid, "Failed");
+        await insertCallLog(To, "Failed", userID, CallSid);
         const failResponse = new VoiceResponse();
         failResponse.say("We are unable to process your call.");
         return res.status(200).type("text/xml").send(failResponse.toString());
@@ -126,6 +128,9 @@ router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (re
     } else if (AnsweredBy === "human") {
         // Human answered — mark as Answered, wait for frontend if >2s
         await updateCallStatus(parentSid, "Answered");
+        if (global.io) {
+            global.io.to(`agent:${userID}`).emit("call-answered", { callSid: parentSid });
+        }
     }
 
     res.sendStatus(200);
@@ -233,6 +238,22 @@ router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }
     res.sendStatus(200);
 });
 
+router.post("/recording-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+    const { CallSid, RecordingUrl, RecordingSid, RecordingStatus, RecordingDuration } = req.body;
+    if (RecordingStatus === 'completed' && RecordingUrl) {
+        try {
+            await con.query(
+                `UPDATE CallLogs SET RecordingUrl = ?, RecordingSid = ?, Duration = ? WHERE CallSID = ?`,
+                [RecordingUrl, RecordingSid, RecordingDuration, CallSid]
+            );
+            res.sendStatus(200);
+        } catch (err) {
+            res.sendStatus(500);
+            console.error("Error updating recording URL:", err);
+        }
+    }
+});
+
 router.get("/balance", async (req, res) => {
     try {
         const balance = await client.balance.fetch();
@@ -246,6 +267,5 @@ router.get("/balance", async (req, res) => {
         return res.status(500).json("Unable to fetch Twilio balance");
     }
 });
-
 
 module.exports = router;

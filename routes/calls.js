@@ -29,7 +29,7 @@ router.get("/logs", async (req, res) => {
             DialingData.Comments
         FROM CallLogs
         JOIN UserDetails ON CallLogs.DialedBy = UserDetails.ID
-        LEFT JOIN DialingData ON CallLogs.CallSID = DialingData.CallSID
+        LEFT JOIN DialingData ON DialingData.CallSID = CallLogs.CallSID
     `;
 
     let params = [];

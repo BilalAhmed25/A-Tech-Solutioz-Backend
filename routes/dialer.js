@@ -6,17 +6,11 @@ const Twilio = require("twilio");
 const { con } = require("../database");
 
 const moment = require("moment-timezone");
-const nowPKT = moment.tz("Asia/Karachi").format("YYYY-MM-DD HH:mm:ss");
 
 const router = express.Router();
 const AccessToken = Twilio.jwt.AccessToken;
 const VoiceGrant = AccessToken.VoiceGrant;
 const { TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, TWILIO_APP_SID, TWILIO_AUTH_TOKEN } = process.env;
-
-function normalizePhone(p) {
-    if (p === null || p === undefined) return "";
-    return String(p).replace(/\D/g, "");
-}
 
 const upateCallLog = async (status = "", callSid, transcripts) => {
     try {
@@ -95,40 +89,36 @@ router.post("/end", bodyParser.json(), async (req, res) => {
 
 router.get("/next", async (req, res) => {
     const { ID } = req.user;
+    const connection = await con.getConnection(); // Get a dedicated connection for the transaction
     try {
-        const getNextLead = async () => {
-            const [rows] = await con.query(`SELECT * FROM DialingData WHERE (Status IS NULL OR Status = '') ORDER BY LeadID ASC LIMIT 1`);
+        await connection.beginTransaction();
+        const [rows] = await connection.query(` SELECT * FROM DialingData WHERE (Status IS NULL OR Status = '') ORDER BY LeadID DESC LIMIT 1 FOR UPDATE SKIP LOCKED `);
 
-            if (!rows || rows.length === 0) return null;
-            return rows[0];
-        };
-
-        let row = await getNextLead();
-        if (!row) { return res.json({ success: true, number: null, message: "List finished." }); }
-
-        // Loop until a valid number is found
-        while (row) {
-            const rawPhone = row.Phone || "";
-
-            // Validate US Phone (digits only, 10 digits)
-            const cleaned = rawPhone.replace(/\D/g, "");
-            const isValidUS = cleaned.length === 10;  // Simple validation
-
-            if (!isValidUS) {
-                // Mark invalid
-                await con.query(`UPDATE DialingData SET Status = 'Invalid Number' WHERE LeadID = ?`, [row.LeadID]);
-                // Check next row
-                row = await getNextLead();
-                continue;
-            } else {
-                await con.query(`UPDATE DialingData SET Status = 'Dialing', DialedBy = ? WHERE LeadID = ?`, [ID, row.LeadID]);
-            }
-
-            return res.json({ success: true, number: cleaned, details: row });
+        if (!rows || rows.length === 0) {
+            await connection.rollback();
+            return res.json({ success: true, number: null, message: "List finished." });
         }
-        return res.json({ success: true, number: null, message: "No valid number available." });
+
+        const row = rows[0];
+        const cleaned = (row.Phone || "").replace(/\D/g, "");
+
+        if (cleaned.length !== 10) {
+            await connection.query(`UPDATE DialingData SET Status = 'Invalid number' WHERE LeadID = ?`, [row.LeadID]);
+            await connection.commit();
+            connection.release();
+            return res.redirect("/next");
+        }
+
+        await connection.query(`UPDATE DialingData SET Status = 'Dialing', DialedBy = ? WHERE LeadID = ?`, [ID, row.LeadID]);
+
+        await connection.commit();
+        connection.release();
+
+        return res.json({ success: true, number: cleaned, details: row });
+
     } catch (err) {
-        console.error("GET /next error:", err);
+        await connection.rollback();
+        connection.release();
         res.status(500).json({ error: err.message });
     }
 });
@@ -157,7 +147,7 @@ router.post("/update-dialing-data", bodyParser.json(), async (req, res) => {
     try {
         const { callSid, leadID, isCallback } = req.body;
         const dialedBy = req.user?.ID;
-        
+
         if (isCallback) return res.json({ success: true });
 
         await con.query(`UPDATE DialingData SET CallSID = ? WHERE DialedBy = ? AND LeadID = ?;`, [callSid, dialedBy, leadID]);
@@ -167,62 +157,5 @@ router.post("/update-dialing-data", bodyParser.json(), async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-
-// router.get("/get-call-status", async (req, res) => {
-//     const { callSid } = req.query;
-//     try {
-//         // Look up the status we just wrote in /amd-status
-//         const [rows] = await con.query(`SELECT Status FROM CallLogs WHERE CallSID = ? LIMIT 1`, [callSid]);
-
-//         if (rows.length > 0) {
-//             res.json({ status: rows[0].Status });
-//         } else {
-//             res.json({ status: "in-progress" });
-//         }
-//     } catch (err) {
-//         res.status(500).json({ error: err.message });
-//     }
-// });
-
-// router.post("/insert-call-log", bodyParser.json(), async (req, res) => {
-//     try {
-//         const { callSid, phoneNumber } = req.body;
-//         const dialedBy = req.user?.ID;
-//         await con.query(`INSERT INTO CallLogs (Phone, CallSID, DialedBy, DialedOn) VALUES (?, ?, ?, ?)`, [normalizePhone(phoneNumber), callSid, dialedBy, nowPKT]);
-//         return res.json({ success: true });
-//     } catch (err) {
-//         console.log(err.message)
-//         res.status(500).json({ error: err.message });
-//     }
-// });
-
-// router.post("/auto-end", bodyParser.json(), async (req, res) => {
-//     try {
-//         const { callSid, duration, transcripts } = req.body;
-//         if (!callSid) {
-//             return res.status(400).json({ error: "callSid is required" });
-//         }
-
-//         await con.query(`UPDATE CallLogs SET Duration = ?, Transcripts = ? WHERE CallSID = ?`, [duration, JSON.stringify(transcripts), callSid]);
-//         return res.json({ success: true });
-//     } catch (err) {
-//         console.error("POST /auto-end error:", err);
-//         res.status(500).json({ error: err.message });
-//     }
-// });
-
-// router.post("/attach-callsid", bodyParser.json(), async (req, res) => {
-//     try {
-//         const { id, callSid, phoneNumber, dialedOn } = req.body;
-//         const dialedBy = req.user?.ID;
-//         if (id) {
-//             await con.query(`UPDATE DialingData SET CallSID = ? WHERE LeadID = ? AND DialedBy = ?;`, [callSid, id, dialedBy]);
-//         }
-//         // await insertCallLog(phoneNumber, dialedBy, callSid, dialedOn);
-//         return res.json({ success: true });
-//     } catch (err) {
-//         res.status(500).json({ error: err.message });
-//     }
-// });
 
 module.exports = router;

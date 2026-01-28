@@ -18,20 +18,56 @@ const upateCallLog = async (status = "", callSid, transcripts) => {
     }
 };
 
-router.get("/token", (req, res) => {
+router.get("/token", async (req, res) => {
     try {
+        const platform = process.env.DialingPlatform || "Twilio";
         const identity = String(req.user?.ID || "agent") + "_" + Math.floor(Math.random() * 10000);
-        const token = new AccessToken(TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, { identity });
 
-        token.addGrant(
-            new VoiceGrant({
-                outgoingApplicationSid: TWILIO_APP_SID,
-                incomingAllow: true
-            })
-        );
+        if (platform === "Telnyx") {
+            // Telnyx typically uses a Connection Token for WebRTC
+            // You can generate this using the Telnyx SDK or a simple POST request to their API
+            // Requires: const telnyx = require('telnyx')(process.env.TELNYX_API_KEY);
 
-        res.json({ token: token.toJwt(), identity });
+            // This is the standard way to create an on-demand credential for the frontend
+            const { data: tokenResponse } = await axios.post(
+                "https://api.telnyx.com/v2/telephony_credentials/default/token",
+                {},
+                {
+                    headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY}` }
+                }
+            );
+
+            return res.json({
+                platform: "Telnyx",
+                token: tokenResponse.data, // This is the JWT for Telnyx RTC
+                identity,
+                telnyx_connection_id: process.env.TELNYX_CONNECTION_ID // Needed for the frontend SDK
+            });
+
+        } else {
+            // Existing Twilio Logic
+            const token = new AccessToken(
+                TWILIO_ACCOUNT_SID,
+                TWILIO_API_KEY_SID,
+                TWILIO_API_KEY_SECRET,
+                { identity }
+            );
+
+            token.addGrant(
+                new VoiceGrant({
+                    outgoingApplicationSid: TWILIO_APP_SID,
+                    incomingAllow: true
+                })
+            );
+
+            return res.json({
+                platform: "Twilio",
+                token: token.toJwt(),
+                identity
+            });
+        }
     } catch (err) {
+        console.error("Token generation error:", err.message);
         res.status(500).json({ error: "Token generation failed" });
     }
 });
@@ -122,6 +158,36 @@ router.get("/next", async (req, res) => {
 });
 
 router.get("/recording", async (req, res) => {
+    const { recordingURL, platform } = req.query;
+
+    try {
+        let axiosConfig = { responseType: "stream" };
+
+        if (platform === "Telnyx") {
+            axiosConfig.headers = {
+                'Authorization': `Bearer ${process.env.TELNYX_API_KEY}`
+            };
+        } else {
+            axiosConfig.auth = {
+                username: TWILIO_ACCOUNT_SID,
+                password: TWILIO_AUTH_TOKEN,
+            };
+        }
+
+        // 3. Fetch and Pipe
+        const response = await axios.get(recordingURL, axiosConfig);
+
+        res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Content-Disposition", "inline; filename=recording.mp3");
+        response.data.pipe(res);
+
+    } catch (error) {
+        console.error("Recording Fetch Error:", error.message);
+        res.status(500).json({ error: "Failed to fetch recording" });
+    }
+});
+
+router.get("/recording-old", async (req, res) => {
     const { recordingURL } = req.query;
     try {
         const response = await axios.get(recordingURL, {

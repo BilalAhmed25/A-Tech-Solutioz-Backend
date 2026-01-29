@@ -7,7 +7,7 @@ const { con } = require("../database");
 const router = express.Router();
 const moment = require("moment-timezone");
 
-const { BASE_URL_FOR_CALLBACKS, TELNYX_NUMBER } = process.env;
+const { BASE_URL_FOR_TELNYX_CALLBACKS, TELNYX_NUMBER } = process.env;
 
 // --- Helper for generating TeXML (Telnyx XML) without Twilio SDK ---
 class TeXMLResponse {
@@ -120,7 +120,7 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async 
         // 2. Transcription
         const start = response.start();
         start.transcription({
-            statusCallbackUrl: `${BASE_URL_FOR_CALLBACKS}/transcription-callback?userID=${userID}`,
+            statusCallbackUrl: `${BASE_URL_FOR_TELNYX_CALLBACKS}/transcription-callback?userID=${userID}`,
             track: 'both_tracks'
         });
 
@@ -129,8 +129,8 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async 
             callerId: TELNYX_NUMBER,
             timeout: 20,
             record: 'record-from-answer',
-            recordingStatusCallback: `${BASE_URL_FOR_CALLBACKS}/recording-status`,
-            statusCallback: `${BASE_URL_FOR_CALLBACKS}/dial-status?parentSid=${CallSid}&userID=${userID}`,
+            recordingStatusCallback: `${BASE_URL_FOR_TELNYX_CALLBACKS}/recording-status`,
+            statusCallback: `${BASE_URL_FOR_TELNYX_CALLBACKS}/dial-status?parentSid=${CallSid}&userID=${userID}`,
             statusCallbackMethod: 'POST',
             statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed']
         });
@@ -138,7 +138,7 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async 
         // 4. AMD Setup (Telnyx specific)
         dial.number(To, {
             machineDetection: 'detect_message_end',
-            amdStatusCallback: `${BASE_URL_FOR_CALLBACKS}/amd-status?parentSid=${CallSid}&userID=${userID}`,
+            amdStatusCallback: `${BASE_URL_FOR_TELNYX_CALLBACKS}/amd-status?parentSid=${CallSid}&userID=${userID}`,
             amdStatusCallbackMethod: 'POST'
         });
 

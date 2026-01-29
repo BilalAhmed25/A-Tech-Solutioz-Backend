@@ -101,7 +101,7 @@ const updateCallStatus = async (callSid, status) => {
 };
 
 // 1. VOICE HANDLER
-router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+router.post("/voice-handler", async (req, res) => {
     const { To, userID, CallSid } = req.body;
     const response = new TeXMLResponse();
 
@@ -154,7 +154,7 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async 
 });
 
 // 2. AMD STATUS (Machine Detection)
-router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+router.post("/amd-status", async (req, res) => {
     const { parentSid, userID } = req.query;
     // Telnyx sends the result in the 'result' field usually, but for TeXML compatibility it might map to AnsweredBy. 
     // Checking both for safety.
@@ -187,7 +187,7 @@ router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (re
 });
 
 // 3. DIAL STATUS
-router.post("/dial-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+router.post("/dial-status", async (req, res) => {
     const { CallStatus, CallDuration, ErrorCode, CallSid } = req.body;
     let { parentSid, userID } = req.query;
 
@@ -242,7 +242,7 @@ router.post("/dial-status", bodyParser.urlencoded({ extended: false }), async (r
 });
 
 // 4. TRANSCRIPTION CALLBACK
-router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }), (req, res) => {
+router.post("/transcription-callback", (req, res) => {
     // Telnyx transcription body parsing
     // Telnyx typically sends JSON in the body for transcriptions
     const payload = req.body;
@@ -265,7 +265,7 @@ router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }
 });
 
 // 5. RECORDING STATUS
-router.post("/recording-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+router.post("/recording-status", async (req, res) => {
     const { CallSid, RecordingUrl, RecordingSid, RecordingStatus, RecordingDuration } = req.body;
 
     // Telnyx sends 'completed' or 'available'

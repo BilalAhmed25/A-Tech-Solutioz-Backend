@@ -22,7 +22,7 @@ router.get("/token", async (req, res) => {
     try {
         const platform = process.env.DIALING_PLATFORM || "Twilio";
         const identity = String(req.user?.ID || "agent") + "_" + Math.floor(Math.random() * 10000);
-        if (platform === "TELNYX") {
+        if (platform === "Telnyx") {
             const { data: tokenResponse } = await axios.post("https://api.telnyx.com/v2/telephony_credentials/default/token",
                 {}, { headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY}` } }
             );

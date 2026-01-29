@@ -42,7 +42,7 @@ const updateCallStatus = async (callSid, status) => {
 };
 
 // 1. VOICE HANDLER
-router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+router.post("/voice-handler", async (req, res) => {
     const { To, userID, CallSid } = req.body;
     const response = new VoiceResponse();
 
@@ -97,7 +97,7 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async 
 });
 
 // 2. AMD STATUS (Machine Detection)
-router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+router.post("/amd-status", async (req, res) => {
     const { parentSid, userID } = req.query;
     const { AnsweredBy } = req.body;
     if (["machine_start", "machine_end_beep", "machine_end_silence", "fax"].includes(AnsweredBy)) {
@@ -125,7 +125,7 @@ router.post("/amd-status", bodyParser.urlencoded({ extended: false }), async (re
 });
 
 // 3. DIAL STATUS
-router.post("/dial-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+router.post("/dial-status", async (req, res) => {
     const { CallStatus, CallDuration, ErrorCode, CallSid } = req.body;
     let { parentSid, userID } = req.query;
     // fallback if query params are missing
@@ -194,7 +194,7 @@ router.post("/dial-status", bodyParser.urlencoded({ extended: false }), async (r
     res.sendStatus(200);
 });
 
-router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }), (req, res) => {
+router.post("/transcription-callback", (req, res) => {
     const event = req.body.TranscriptionEvent;
 
     if (event !== "transcription-content") {
@@ -226,7 +226,7 @@ router.post("/transcription-callback", bodyParser.urlencoded({ extended: false }
     res.sendStatus(200);
 });
 
-router.post("/recording-status", bodyParser.urlencoded({ extended: false }), async (req, res) => {
+router.post("/recording-status", async (req, res) => {
     const { CallSid, RecordingUrl, RecordingSid, RecordingStatus, RecordingDuration } = req.body;
     if (RecordingStatus === 'completed' && RecordingUrl) {
         try {

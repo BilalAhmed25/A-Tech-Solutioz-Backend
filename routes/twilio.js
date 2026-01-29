@@ -44,7 +44,7 @@ const updateCallStatus = async (callSid, status) => {
 // 1. VOICE HANDLER
 router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async (req, res) => {
     const { To, userID, CallSid } = req.body;
-    const platform = process.env.DialingPlatform || "Twilio";
+    const platform = process.env.DIALING_PLATFORM || "Twilio";
     const response = new VoiceResponse();
 
     // 1. Validation
@@ -72,7 +72,7 @@ router.post("/voice-handler", bodyParser.urlencoded({ extended: false }), async 
         });
 
         // 3. Dialing Logic based on Platform
-        const isTelnyx = platform === "Telnyx";
+        const isTelnyx = platform === "TELNYX";
 
         const dial = response.dial({
             callerId: isTelnyx ? process.env.TELNYX_NUMBER : process.env.TWILIO_NUMBER,

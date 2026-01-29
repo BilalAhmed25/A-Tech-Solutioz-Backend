@@ -20,21 +20,11 @@ const upateCallLog = async (status = "", callSid, transcripts) => {
 
 router.get("/token", async (req, res) => {
     try {
-        const platform = process.env.DialingPlatform || "Twilio";
+        const platform = process.env.DIALING_PLATFORM || "Twilio";
         const identity = String(req.user?.ID || "agent") + "_" + Math.floor(Math.random() * 10000);
-
-        if (platform === "Telnyx") {
-            // Telnyx typically uses a Connection Token for WebRTC
-            // You can generate this using the Telnyx SDK or a simple POST request to their API
-            // Requires: const telnyx = require('telnyx')(process.env.TELNYX_API_KEY);
-
-            // This is the standard way to create an on-demand credential for the frontend
-            const { data: tokenResponse } = await axios.post(
-                "https://api.telnyx.com/v2/telephony_credentials/default/token",
-                {},
-                {
-                    headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY}` }
-                }
+        if (platform === "TELNYX") {
+            const { data: tokenResponse } = await axios.post("https://api.telnyx.com/v2/telephony_credentials/default/token",
+                {}, { headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY}` } }
             );
 
             return res.json({

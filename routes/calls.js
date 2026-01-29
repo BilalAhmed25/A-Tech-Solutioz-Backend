@@ -116,7 +116,7 @@ router.get("/next", async (req, res) => {
     const connection = await con.getConnection(); // Get a dedicated connection for the transaction
     try {
         await connection.beginTransaction();
-        const [rows] = await connection.query(` SELECT * FROM DialingData WHERE (Status IS NULL OR Status = '') ORDER BY LeadID DESC LIMIT 1 FOR UPDATE SKIP LOCKED `);
+        const [rows] = await connection.query(`SELECT * FROM DialingData WHERE (Status IS NULL OR Status = '') ORDER BY LeadID DESC LIMIT 1 FOR UPDATE SKIP LOCKED `);
 
         if (!rows || rows.length === 0) {
             await connection.rollback();

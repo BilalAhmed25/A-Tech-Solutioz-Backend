@@ -22,9 +22,7 @@ const express = require('express'),
 
 const allowedOrigins = [
     'http://localhost:5173',
-
     'https://crm.a-techsolutionz.com',
-    'http://crm.a-techsolutionz.com',
 ];
 
 app.use((req, res, next) => {
@@ -55,6 +53,7 @@ app.use(bodyParser.json());
 
 app.use("/auth", auth);
 app.use('/twilio', twilio);
+app.use('/telnyx', telnyx);
 app.use(authenticateToken);
 
 app.use('/hr', hr);

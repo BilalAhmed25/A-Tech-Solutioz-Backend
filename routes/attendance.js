@@ -6,102 +6,6 @@ const moment = require('moment');
 // -------------------- Helper Functions --------------------
 
 // Centralized logic to calculate all metrics for a specific day
-function calculateDailyMetricsOld(checkIn, checkOut, shiftStartStr, shiftEndStr, requiredHours, dayDate) {
-    // Defaults
-    let lateMinutes = 0;
-    let leftEarlyMinutes = 0;
-    let extraMinutes = 0;
-    let workingMinutes = 0;
-    let status = 'Absent';
-
-    // 1. Status Determination
-    if (checkIn) {
-        status = 'Present';
-        if (!checkOut) status = 'Left without checkout';
-    }
-
-    // If no shift is assigned, we can't calculate specific lateness/early leaving relative to shift
-    if (!shiftStartStr || !shiftEndStr) {
-        // Basic working minutes if no shift defined
-        if (checkIn && checkOut) {
-            workingMinutes = moment(checkOut).diff(moment(checkIn), 'minutes');
-        }
-        return { lateMinutes, leftEarlyMinutes, extraMinutes, workingMinutes, status };
-    }
-
-    // 2. Parse Shift Timings
-    const shiftStartMoment = moment(`${dayDate} ${shiftStartStr}`, 'YYYY-MM-DD HH:mm:ss', true);
-    let shiftEndMoment = moment(`${dayDate} ${shiftEndStr}`, 'YYYY-MM-DD HH:mm:ss', true);
-
-    // Handle overnight shifts (e.g., Start 22:00, End 06:00)
-    if (shiftEndMoment.isBefore(shiftStartMoment)) {
-        shiftEndMoment.add(1, 'day');
-    }
-
-    // 3. Parse Punch Timings
-    const inMoment = checkIn ? moment(checkIn) : null;
-    const outMoment = checkOut ? moment(checkOut) : null;
-
-    // 4. Calculate Working Minutes
-    if (inMoment && outMoment) {
-        // Handle overnight work (if out is before in)
-        let calcOut = outMoment.clone();
-        if (calcOut.isBefore(inMoment)) calcOut.add(1, 'day');
-        workingMinutes = calcOut.diff(inMoment, 'minutes');
-    }
-
-    // 5. Calculate Late Minutes
-    const isHourly = !!requiredHours && requiredHours < 9;
-    if (!isHourly && inMoment && inMoment.isAfter(shiftStartMoment)) {
-        const lateDiff = inMoment.diff(shiftStartMoment, 'minutes');
-        lateMinutes = lateDiff > 15 ? lateDiff : 0;
-    }
-
-    // 6. Calculate Left Early Minutes (CheckOut < ShiftEnd)
-    // Only calculate if they actually checked out
-    // if (outMoment && outMoment.isBefore(shiftEndMoment)) {
-    //     const earlyMinutes = shiftEndMoment.diff(outMoment, 'minutes');
-    //     leftEarlyMinutes = earlyMinutes - (requiredHours * 60)
-    // }
-
-    // 6. Calculate Left Early Minutes (based on total working time)
-    const requiredMinutes = requiredHours ? requiredHours * 60 : 9 * 60;
-
-    if (workingMinutes > 0 && workingMinutes < requiredMinutes) {
-        leftEarlyMinutes = requiredMinutes - workingMinutes;
-    }
-
-    // 7. Calculate Extra Hours (CheckOut > ShiftEnd)
-    // Requirement: Only calculate time AFTER shift end. Do not include early check-in.
-    // if (outMoment && outMoment.isAfter(shiftEndMoment)) {
-    //     extraMinutes = outMoment.diff(shiftEndMoment, 'minutes');
-    // }
-
-    // const shiftHours = moment(shiftEndStr).diff(moment(shiftEndStr), 'minutes');
-    // if (workingMinutes > shiftHours) {
-    //     extraMinutes = outMoment.diff(shiftEndMoment, 'minutes');
-    // }
-
-    // if (outMoment && outMoment.isAfter(shiftEndMoment)) {
-    //     extraMinutes = outMoment.diff(shiftEndMoment, 'minutes');
-    // }
-
-    // 7. Calculate Extra Minutes (Hourly vs Full-time)
-    if (workingMinutes > 0) {
-        const baseMinutes = requiredHours
-            ? requiredHours * 60     // Hourly employee
-            : 9 * 60;                // Full-time employee
-
-        extraMinutes = workingMinutes - baseMinutes;
-
-        if (extraMinutes < 0) {
-            extraMinutes = 0;
-        }
-    }
-
-    return { lateMinutes, leftEarlyMinutes, extraMinutes, workingMinutes, status, isPaid: false };
-}
-
 function calculateDailyMetrics(checkIn, checkOut, shiftStartStr, shiftEndStr, requiredHours, dayDate, isHourlyEmployee = false) {
     // Defaults
     let lateMinutes = 0;
@@ -209,7 +113,8 @@ async function getHourlyRequiredHours(userID) {
 async function getCheckInOut(userID, shiftStart, day) {
     const shiftStartMoment = moment(`${day}T${shiftStart}`);
     const checkInStart = shiftStartMoment.clone().subtract(3, 'hours');
-    const checkInEnd = shiftStartMoment.clone().add(5, 'hours');
+    // const checkInEnd = shiftStartMoment.clone().add(5, 'hours');
+    const checkInEnd = shiftStartMoment.clone().add(7, 'hours');
     const checkOutEnd = shiftStartMoment.clone().add(15, 'hours');
 
     const [logs] = await attendanceDB.execute(`

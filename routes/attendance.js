@@ -138,11 +138,6 @@ async function getCheckInOut(userID, shiftStart, day) {
     return { checkIn, checkOut };
 }
 
-const isHoliday = async (day) => {
-    const [rows] = await con.execute(`SELECT * FROM Holidays WHERE HolidayDate=? AND IsPaid=1`, [day]);
-    return rows.length ? rows[0] : null;
-}
-
 const getApprovedLeave = async (userID, day) => {
     const [rows] = await con.execute(`
         SELECT lr.*, lt.IsPaid
@@ -179,6 +174,12 @@ const applyLeaveHolidayRules = (metrics, leave, holiday) => {
     return metrics;
 }
 
+async function isWorkingWeekend(day) {
+    const [rows] = await con.execute(`SELECT IsWorkingDay FROM WeekendOverrides WHERE Date = ? LIMIT 1 `, [day]);
+
+    if (!rows.length) return false; // default weekend
+    return rows[0].IsWorkingDay === 1;
+}
 
 // -------------------- API: /day --------------------
 router.get('/day', async (req, res) => {
@@ -324,14 +325,25 @@ router.get('/user', async (req, res) => {
             metrics = applyLeaveHolidayRules(metrics, leave, holiday);
 
             // **Force weekend detection BEFORE default Absent**
-            if (!leave && !holiday && (weekday === 0 || weekday === 6)) {
+            // if (!leave && !holiday && (weekday === 0 || weekday === 6)) {
+            //     metrics.status = 'Weekend';
+            //     metrics.lateMinutes = 0;
+            //     metrics.leftEarlyMinutes = 0;
+            //     metrics.workingMinutes = 0;
+            //     metrics.extraMinutes = 0;
+            // } else if (!shiftStart && !leave && !holiday && metrics.status === 'Absent') {
+            //     metrics.status = 'Absent';
+            // }
+
+            const isWeekend = (weekday === 0 || weekday === 6);
+            const isWorking = isWeekend ? await isWorkingWeekend(day) : false;
+
+            if (!leave && !holiday && isWeekend && !isWorking) {
                 metrics.status = 'Weekend';
                 metrics.lateMinutes = 0;
                 metrics.leftEarlyMinutes = 0;
                 metrics.workingMinutes = 0;
                 metrics.extraMinutes = 0;
-            } else if (!shiftStart && !leave && !holiday && metrics.status === 'Absent') {
-                metrics.status = 'Absent';
             }
 
             results.push({

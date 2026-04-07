@@ -148,7 +148,18 @@ function convertDMYtoMySQL(dateStr) {
 
     const fullYear = yy.length === 2 ? `20${yy}` : yy; // convert 25 -> 2025
 
-    return `${fullYear}-${mm}-${dd} ${timePart}:00`;
+    // Pad date parts
+    const paddedDd = dd.padStart(2, '0');
+    const paddedMm = mm.padStart(2, '0');
+    const paddedYy = fullYear.length === 2 ? `20${fullYear}` : fullYear; // though fullYear is already 4
+
+    // Pad time parts
+    const [hh = '00', min = '00', sec = '00'] = timePart.split(':');
+    const paddedHh = hh.padStart(2, '0');
+    const paddedMin = min.padStart(2, '0');
+    const paddedSec = sec.padStart(2, '0');
+
+    return `${paddedYy}-${paddedMm}-${paddedDd} ${paddedHh}:${paddedMin}:${paddedSec}`;
 }
 
 router.post("/upload-attendance", upload.single("file"), async (req, res) => {

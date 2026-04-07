@@ -23,6 +23,7 @@ const express = require('express'),
 const allowedOrigins = [
     'http://localhost:5173',
     'https://crm.a-techsolutionz.com',
+    'https://portal.websitemockupz.com',
 ];
 
 app.use((req, res, next) => {

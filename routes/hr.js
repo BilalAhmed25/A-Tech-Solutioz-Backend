@@ -144,6 +144,8 @@ function convertDMYtoMySQL(dateStr) {
     const [datePart, timePart = "00:00"] = dateStr.split(" ");
     const [dd, mm, yy] = datePart.split("-");
 
+    if (!dd || !mm || !yy) return null;
+
     const fullYear = yy.length === 2 ? `20${yy}` : yy; // convert 25 -> 2025
 
     return `${fullYear}-${mm}-${dd} ${timePart}:00`;

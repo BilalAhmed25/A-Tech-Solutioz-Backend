@@ -152,9 +152,9 @@ function convertDMYtoMySQL(dateStr) {
         dd = d;
         yyyy = y;
     } 
-    // Otherwise try dash format (DD-MM-YY)
+    // Otherwise try dash format (MM-DD-YY)
     else if (datePart.includes("-")) {
-        const [d, m, y] = datePart.split("-");
+        const [m, d, y] = datePart.split("-");
         mm = m;
         dd = d;
         yyyy = y.length === 2 ? `20${y}` : y;

@@ -138,20 +138,36 @@ router.delete('/delete-profile', async function (req, res) {
 })
 
 function convertDMYtoMySQL(dateStr) {
-    // Example input: "29-11-25 23:37"
+    // Example inputs: "29-11-25 23:37" (DD-MM-YY) or "3/31/2026 20:14" (M/DD/YYYY)
     if (!dateStr) return null;
 
     const [datePart, timePart = "00:00"] = dateStr.split(" ");
-    const [dd, mm, yy] = datePart.split("-");
+    
+    let dd, mm, yyyy;
+    
+    // Try slash format first (M/DD/YYYY or MM/DD/YYYY)
+    if (datePart.includes("/")) {
+        const [m, d, y] = datePart.split("/");
+        mm = m;
+        dd = d;
+        yyyy = y;
+    } 
+    // Otherwise try dash format (DD-MM-YY)
+    else if (datePart.includes("-")) {
+        const [d, m, y] = datePart.split("-");
+        mm = m;
+        dd = d;
+        yyyy = y.length === 2 ? `20${y}` : y;
+    } 
+    else {
+        return null;
+    }
 
-    if (!dd || !mm || !yy) return null;
-
-    const fullYear = yy.length === 2 ? `20${yy}` : yy; // convert 25 -> 2025
+    if (!dd || !mm || !yyyy) return null;
 
     // Pad date parts
     const paddedDd = dd.padStart(2, '0');
     const paddedMm = mm.padStart(2, '0');
-    const paddedYy = fullYear.length === 2 ? `20${fullYear}` : fullYear; // though fullYear is already 4
 
     // Pad time parts
     const [hh = '00', min = '00', sec = '00'] = timePart.split(':');
@@ -159,7 +175,7 @@ function convertDMYtoMySQL(dateStr) {
     const paddedMin = min.padStart(2, '0');
     const paddedSec = sec.padStart(2, '0');
 
-    return `${paddedYy}-${paddedMm}-${paddedDd} ${paddedHh}:${paddedMin}:${paddedSec}`;
+    return `${yyyy}-${paddedMm}-${paddedDd} ${paddedHh}:${paddedMin}:${paddedSec}`;
 }
 
 router.post("/upload-attendance", upload.single("file"), async (req, res) => {
@@ -208,12 +224,15 @@ router.post("/upload-attendance", upload.single("file"), async (req, res) => {
                     const sqlColumns = dbCols.map(col => `\`${col}\``).join(", ");
 
                     const values = [];
-                    const valuePlaceholders = rows.map(row => {
+                    const valuePlaceholders = rows.map((row, rowIdx) => {
                         // const rowValues = csvCols.map(csvCol => row[csvCol] ?? null);
                         const rowValues = csvCols.map(csvCol => {
                             let value = row[csvCol] ?? null;
                             if (mappingObj[csvCol] === "punch_time") {
-                                value = convertDMYtoMySQL(value);
+                                const rawValue = row[csvCol];
+                                const converted = convertDMYtoMySQL(value);
+                                console.log(`Row ${rowIdx}: Raw="${rawValue}" → Converted="${converted}"`);
+                                value = converted;
                             }
                             return value;
                         });
